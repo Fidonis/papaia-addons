@@ -17,13 +17,11 @@ on:
     paths:
       - 'src/uv.lock'
       - 'src/**/*.py'
-      - '.github/workflows/license-check.yml'
   pull_request:
     branches: [main]
     paths:
       - 'src/uv.lock'
       - 'src/**/*.py'
-      - '.github/workflows/license-check.yml'
   workflow_dispatch:
 
 permissions:

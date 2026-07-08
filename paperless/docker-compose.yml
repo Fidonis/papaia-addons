@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════════════════
-# papaia-ext-paperless — Docker Compose
+# papaia-addon-paperless — Docker Compose
 # by Fidonis GmbH · https://fidonis.de
 #
 # Paperless-ngx document management with OIDC SSO and an OIDC/RBAC-secured
@@ -10,8 +10,8 @@
 # to this network (Seam 1). External access via the Nginx Proxy Manager
 # (Seam 5 — see integration/infra/nginx/paperless.conf and README.md).
 #
-# env_file reads from .env in the same directory as this file, seeded by
-# `papaia-ctl apps integrate paperless`.
+# env_file reads from .env in the same directory as this file, materialized
+# from the config bundle by `papaia-ctl addon start paperless`.
 # ═══════════════════════════════════════════════════════════════════════════
 services:
 

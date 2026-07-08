@@ -1,6 +1,6 @@
-# papaia-ext-paperless
+# papaia-addon-paperless
 
-Paperless-ngx document management extension for [papaia](https://github.com/Fidonis/papaia).
+Paperless-ngx document management addon for [papaia](https://github.com/Fidonis/papaia).
 
 Adds Paperless-ngx with full-text search and OCR, an OIDC-secured MCP server for
 AI-assisted document access via LibreChat, and a Keycloak SSO login for Paperless users.
@@ -27,16 +27,18 @@ All services run on the isolated `papaia-paperless-net` Docker bridge network.
 ## Installation via papaia-ctl
 
 ```bash
-# 1. Clone this extension into your workspace
-git clone https://github.com/Fidonis/papaia-ext-paperless extensions/paperless
+# 1. Clone this addon into your workspace
+git clone https://github.com/Fidonis/papaia-addon-paperless addons/paperless
 
-# 2. Integrate — seeds .env, registers in deployment.yaml, renders config
-papaia-ctl apps integrate paperless --path=extensions/paperless
+# 2. Install — seeds .env in the config bundle, registers in deployment.yaml, renders config
+papaia-ctl addon install paperless --path=addons/paperless
 
-# 3. Follow the Keycloak checklist printed by integrate (see below)
+# 3. Follow the Keycloak checklist printed by install (see below)
 
-# 4. Start the extension
-papaia-ctl apps install paperless
+# 4. Edit CHANGE_ME values in <papaia-config>/addons/paperless/.env
+
+# 5. Start the addon
+papaia-ctl addon start paperless
 ```
 
 ---
@@ -106,10 +108,10 @@ networks:
     external: true
 ```
 
-Start the extension network first (creates the Docker network):
+Start the addon network first (creates the Docker network):
 
 ```bash
-docker compose -f extensions/paperless/docker-compose.yml up -d
+docker compose -f addons/paperless/docker-compose.yml up -d
 ```
 
 Then restart the core stack to pick up the override:
@@ -154,31 +156,29 @@ on the `papaia-paperless-net` network.
 
 ---
 
-## Updating
+## Stopping and removing
 
 ```bash
-papaia-ctl apps update paperless
+# Stop containers (leave config bundle intact)
+papaia-ctl addon stop paperless
+
+# Stop and remove containers
+papaia-ctl addon stop paperless --clean-up
+
+# Remove integration only (config bundle kept, containers untouched)
+papaia-ctl addon remove paperless
+
+# Uninstall completely (removes config bundle + deployment entry + containers, volumes kept)
+papaia-ctl addon uninstall paperless
+
+# Uninstall and delete volumes
+papaia-ctl addon uninstall paperless --clean-up
 ```
 
 Or manually:
 
 ```bash
-docker compose -f extensions/paperless/docker-compose.yml pull
-docker compose -f extensions/paperless/docker-compose.yml up -d
-```
-
----
-
-## Removal
-
-```bash
-papaia-ctl apps remove paperless --volumes
-```
-
-Or manually:
-
-```bash
-docker compose -f extensions/paperless/docker-compose.yml down -v
+docker compose -f addons/paperless/docker-compose.yml down -v
 # Remove the compose override and re-render papaia config
 ```
 
@@ -201,6 +201,6 @@ docker compose -f extensions/paperless/docker-compose.yml down -v
 ## Known limitations
 
 - **`mcpSettings.allowedDomains`** must be updated manually (or via overlay) when adding
-  this extension alongside other MCP extensions. The papaia config render merges dict keys
+  this addon alongside other MCP addons. The papaia config render merges dict keys
   but replaces lists wholesale; a fix is tracked in the papaia repository.
 - **Keycloak client registration** is not automated in this version; see step 2 above.

@@ -12,3 +12,7 @@ mcpServers:
     # dynamic OAuth discovery (which paperless-mcp does not speak) and burns
     # 120 s in OAuth handling timeout per retry cycle.
     startup: false
+
+mcpSettings:
+  allowedDomains:
+    - "http://paperless-mcp:8000"

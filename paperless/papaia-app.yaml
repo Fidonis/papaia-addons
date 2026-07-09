@@ -1,0 +1,21 @@
+name: paperless
+version: 1.0.0
+addon_repo: papaia-addon-paperless
+papaia_compat: ">=0.8.0"
+description: "Paperless-ngx document management + OIDC/RBAC MCP server"
+
+networks:
+  app_network: papaia-paperless-net
+  attach: [nginx-proxy-manager, librechat]
+
+integration:
+  keycloak:
+    clients:
+      - integration/infra/keycloak/paperless.json
+      - integration/infra/keycloak/mcp-paperless.json
+    client_mappers:
+      librechat:
+        - integration/infra/keycloak/librechat-audience-mapper.json
+  librechat: integration/ai/librechat/librechat.yaml
+  homepage: integration/services/homepage/config/services.yaml
+  nginx: integration/infra/nginx/paperless.conf

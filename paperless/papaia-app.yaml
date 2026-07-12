@@ -8,6 +8,14 @@ networks:
   app_network: papaia-paperless-net
   attach: [nginx-proxy-manager, librechat]
 
+# Env vars pointing at the bundled-Keycloak CA cert (mounted from
+# $PAPAIA_CONFIG_DIR/certs). papaia-ctl clears them via a generated override
+# when auth_provider=external_oidc, so requests/httpx fall back to the
+# system CA bundle instead of failing on the absent local-ca.crt.
+local_ca_env:
+  paperless: [REQUESTS_CA_BUNDLE]
+  paperless-mcp: [SSL_CERT_FILE]
+
 env_prompts:
   PAPAIA_CONFIG_DIR:
     label: "papAIa config directory (PAPAIA_CONFIG_DIR from core setup)"

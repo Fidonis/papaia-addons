@@ -67,6 +67,9 @@ services:
       PAPERLESS_ENABLE_HTTP_REMOTE_USER:       "true"
       PAPERLESS_ENABLE_HTTP_REMOTE_USER_API:   "true"
       PAPERLESS_HTTP_REMOTE_USER_HEADER_NAME:  "HTTP_X_PAPAIA_REMOTE_USER"
+      # CA cert for Python requests — trusts the bundled Keycloak self-signed cert.
+      # Cleared to "" via overrides/addons/ when auth_provider=external_oidc.
+      REQUESTS_CA_BUNDLE: /certs/local-ca.crt
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -77,6 +80,7 @@ services:
     ports:
       - "${HOST_IP:-0.0.0.0}:${PAPERLESS_EXT_PORT:-8010}:8000"
     volumes:
+      - ${PAPAIA_CONFIG_DIR}/certs:/certs:ro
       - paperless-data:/usr/src/paperless/data
       - ${MEDIA_DIRECTORY:-./data/media}:/usr/src/paperless/media
       - ${EXPORT_DIRECTORY:-./data/export}:/usr/src/paperless/export
@@ -114,10 +118,15 @@ services:
       MCP_PORT:                     ${PAPERLESS_MCP_PORT:-8000}
       MCP_PATH:                     ${PAPERLESS_MCP_PATH:-/mcp}
       LOG_LEVEL:                    ${PAPERLESS_MCP_LOG_LEVEL:-INFO}
+      # CA cert for httpx/ssl — trusts the bundled Keycloak self-signed cert.
+      # Cleared to "" via overrides/addons/ when auth_provider=external_oidc.
+      SSL_CERT_FILE:                /certs/local-ca.crt
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
       - paperless
+    volumes:
+      - ${PAPAIA_CONFIG_DIR}/certs:/certs:ro
     networks:
       - papaia-paperless-net
     healthcheck:

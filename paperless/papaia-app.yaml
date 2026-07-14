@@ -1,6 +1,11 @@
 name: paperless
 version: 1.0.0
 addon_repo: papaia-addon-paperless
+requires:
+  # Contract generation this addon is built against; checked against the
+  # core's ADDON_API window by cores that support compatibility gating.
+  addon_api: 1
+# Fallback axis for cores that do not read `requires` yet.
 papaia_compat: ">=0.8.0"
 description: "Paperless-ngx document management + OIDC/RBAC MCP server"
 

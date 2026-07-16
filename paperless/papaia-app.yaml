@@ -1,0 +1,51 @@
+name: paperless
+version: 1.0.0
+addon_repo: papaia-addon-paperless
+requires:
+  # Contract generation this addon is built against; checked against the
+  # core's ADDON_API window by cores that support compatibility gating.
+  addon_api: 1
+# Fallback axis for cores that do not read `requires` yet.
+papaia_compat: ">=0.8.0"
+description: "Paperless-ngx document management + OIDC/RBAC MCP server"
+
+networks:
+  app_network: papaia-paperless-net
+  attach: [nginx-proxy-manager, librechat]
+
+# Env vars pointing at the bundled-Keycloak CA cert (mounted from
+# $PAPAIA_CONFIG_DIR/certs). papaia-ctl clears them via a generated override
+# when auth_provider=external_oidc, so requests/httpx fall back to the
+# system CA bundle instead of failing on the absent local-ca.crt.
+local_ca_env:
+  paperless: [REQUESTS_CA_BUNDLE]
+  paperless-mcp: [SSL_CERT_FILE]
+
+env_prompts:
+  PAPAIA_CONFIG_DIR:
+    label: "papAIa config directory (PAPAIA_CONFIG_DIR from core setup)"
+    default_from_core: PAPAIA_CONFIG_DIR
+  OIDC_ISSUER:
+    label: "Keycloak issuer URL (browser-facing, used for OIDC login and token validation)"
+    default_from_core: OIDC_ISSUER
+  PAPERLESS_PUBLIC_URL:
+    label: "Browser-facing URL of the Paperless web UI (scheme + host + optional port)"
+    default: "http://host.docker.internal:8010"
+
+env_replace_secrets:
+  KC_PAPERLESS_CLIENT_SECRET:
+    hint: "Keycloak Admin UI → Clients → paperless → Credentials → Client Secret"
+  KC_MCP_PAPERLESS_CLIENT_SECRET:
+    hint: "Keycloak Admin UI → Clients → mcp-paperless → Credentials → Client Secret"
+
+integration:
+  keycloak:
+    clients:
+      - integration/infra/keycloak/paperless.json
+      - integration/infra/keycloak/mcp-paperless.json
+    client_mappers:
+      librechat:
+        - integration/infra/keycloak/librechat-audience-mapper.json
+  librechat: integration/ai/librechat/librechat.yaml
+  homepage: integration/services/homepage/config/services.yaml
+  nginx: integration/infra/nginx/paperless.conf

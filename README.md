@@ -1,5 +1,5 @@
-# papaia-extensions
+# papaia-addons
 
-Extensions for the [papaia](https://github.com/Fidonis/papaia) stack.
+Addons for the [papaia](https://github.com/Fidonis/papaia) stack.
 
 Maintained by [Fidonis](https://fidonis.de).

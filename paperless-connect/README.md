@@ -84,7 +84,10 @@ Edit `.env` and fill in all `CHANGE_ME` values:
 | `OIDC_ISSUER` | Keycloak issuer URL (same value as `AUTH_HOST` in your papaia setup) |
 | `PAPAIA_CONFIG_DIR` | Path to the directory created by `papaia-ctl setup` |
 | `PAPERLESS_MCP_PAPERLESS_URL` | URL of the existing Paperless instance as reachable from the MCP container — often the public URL (e.g. `https://docs.example.com`), or `http://host.docker.internal:8000` when it runs on the same host |
-| `KC_MCP_PAPERLESS_CLIENT_SECRET` | Keycloak client secret for `mcp-paperless` (any random value; the client does not use it for login) |
+
+`mcp-paperless` needs no client secret: it is a Bearer-token resource server that verifies
+incoming tokens against Keycloak's public JWKS endpoint and never authenticates itself to
+Keycloak.
 
 ### 2. Register Keycloak client
 
@@ -96,12 +99,26 @@ In the Keycloak admin UI, create one client in the `papaia` realm:
 - All flows disabled
 - (see `integration/infra/keycloak/mcp-paperless.json`)
 
-**Audience mapper on the `librechat` client:**
+**Audience mapper on the `librechat` client — mandatory, do not skip:**
 Add a protocol mapper of type *Audience* to the existing `librechat` client:
 - Name: `mcp-paperless-audience`
 - Included Client Audience: `mcp-paperless`
 - Add to access token: yes
 - (see `integration/infra/keycloak/librechat-audience-mapper.json`)
+
+> **Why this step is security-critical.** This mapper is the only thing that puts
+> `mcp-paperless` into the `aud` claim of the access token LibreChat forwards. `paperless-mcp`
+> rejects any token whose audience does not match `PAPERLESS_MCP_OIDC_AUDIENCE`, so without the
+> mapper every MCP call fails with `401 invalid_token`.
+>
+> Verify it with **Clients → librechat → Client scopes → Evaluate**: generate an access token and
+> confirm `mcp-paperless` appears in `aud`. Checking the *Dedicated* mappers tab alone is not
+> sufficient — a mapper can also arrive through an assigned client scope.
+>
+> Older `paperless-mcp-rbac` releases (before the audience hardening fix) accepted tokens that
+> carried **no** `aud` claim at all, which made a missing mapper look like a working setup while
+> in fact any token from the realm was accepted. If you are upgrading and MCP calls suddenly
+> return 401, the mapper is what you are missing.
 
 ### 3. Wire the network (Seam 1)
 

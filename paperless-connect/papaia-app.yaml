@@ -42,12 +42,6 @@ env_prompts:
     default_from_core: OIDC_ISSUER
     type: url
 
-  # ── Keycloak OIDC client secret ───────────────────────────────────────────
-  KC_MCP_PAPERLESS_CLIENT_SECRET:
-    label: "Keycloak client secret (mcp-paperless)"
-    hint: "Copy from Keycloak Admin UI → Clients → mcp-paperless → Credentials → Client Secret"
-    secret: true
-
   # ── MCP server ────────────────────────────────────────────────────────────
   PAPERLESS_MCP_OIDC_AUDIENCE:
     label: "MCP server token audience"
@@ -96,10 +90,6 @@ env_prompts:
     label: "MCP log level"
     hint: "One of: DEBUG, INFO, WARNING, ERROR"
     type: text
-
-env_replace_secrets:
-  KC_MCP_PAPERLESS_CLIENT_SECRET:
-    hint: "Keycloak Admin UI → Clients → mcp-paperless → Credentials → Client Secret"
 
 integration:
   keycloak:

@@ -1,0 +1,73 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# papaia-addon-paperless-connect — Docker Compose
+# by Fidonis GmbH · https://fidonis.de
+#
+# Connects an existing standalone Paperless-ngx instance to the papaia stack
+# via an OIDC/RBAC-secured MCP server for AI-assisted document access.
+#
+# The MCP server runs on the isolated papaia-paperless-connect-net bridge
+# network. papaia-ctl generates a compose override that attaches librechat
+# to this network (Seam 1). The existing Paperless instance is reached via
+# PAPERLESS_MCP_PAPERLESS_URL (typically http://host.docker.internal:<port>).
+#
+# env_file reads from .env in the same directory as this file, materialized
+# from the config bundle by `papaia-ctl addon start paperless-connect`.
+# ═══════════════════════════════════════════════════════════════════════════
+services:
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  #  MCP SERVER — OIDC/RBAC-secured Paperless proxy
+  #
+  #  Validates the caller's Keycloak Bearer token and forwards Paperless-ngx
+  #  API requests via X-Papaia-Remote-User so Paperless enforces per-user RBAC.
+  #  No admin credentials stored here.
+  #
+  #  LibreChat connects via the generated Seam-1 network override
+  #  (papaia-paperless-connect-net attached to the librechat container).
+  #  OIDC token validation reaches Keycloak at OIDC_ISSUER via extra_hosts.
+  #  The existing Paperless instance is reached via PAPERLESS_MCP_PAPERLESS_URL,
+  #  also resolved through extra_hosts when running on the same host.
+  # ═══════════════════════════════════════════════════════════════════════════
+  paperless-mcp:
+    image: ${PAPERLESS_MCP_IMAGE:-ghcr.io/fidonis/paperless-mcp-rbac:0.1.1}
+    restart: unless-stopped
+    environment:
+      OIDC_ISSUER_URL:              ${OIDC_ISSUER}
+      OIDC_AUDIENCE:                ${PAPERLESS_MCP_OIDC_AUDIENCE:-mcp-paperless}
+      OIDC_JWKS_CACHE_TTL:          ${PAPERLESS_MCP_OIDC_JWKS_CACHE_TTL:-3600}
+      PAPERLESS_URL:                ${PAPERLESS_MCP_PAPERLESS_URL}
+      PAPERLESS_REMOTE_USER_HEADER: ${PAPERLESS_MCP_REMOTE_USER_HEADER:-X-Papaia-Remote-User}
+      PAPERLESS_USERNAME_CLAIM:     ${PAPERLESS_MCP_USERNAME_CLAIM:-preferred_username}
+      PAPERLESS_HTTP_TIMEOUT:       ${PAPERLESS_MCP_HTTP_TIMEOUT:-30}
+      PAPERLESS_MAX_DOWNLOAD_BYTES: ${PAPERLESS_MCP_MAX_DOWNLOAD_BYTES:-10485760}
+      MCP_HOST:                     ${PAPERLESS_MCP_HOST:-0.0.0.0}
+      MCP_PORT:                     ${PAPERLESS_MCP_PORT:-8000}
+      MCP_PATH:                     ${PAPERLESS_MCP_PATH:-/mcp}
+      LOG_LEVEL:                    ${PAPERLESS_MCP_LOG_LEVEL:-INFO}
+      # CA cert for httpx/ssl — trusts the bundled Keycloak self-signed cert.
+      # Cleared to "" via overrides/addons/ when auth_provider=external_oidc.
+      SSL_CERT_FILE:                /certs/local-ca.crt
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ${PAPAIA_CONFIG_DIR}/certs:/certs:ro
+    networks:
+      - papaia-paperless-connect-net
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health',timeout=3).status==200 else 1)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    labels:
+      de.fidonis.module: papaia-paperless-connect
+      de.fidonis.role: mcp-server
+
+networks:
+  papaia-paperless-connect-net:
+    driver: bridge
+    name: papaia-paperless-connect-net

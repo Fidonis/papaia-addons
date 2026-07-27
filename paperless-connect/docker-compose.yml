@@ -29,7 +29,7 @@ services:
   #  also resolved through extra_hosts when running on the same host.
   # ═══════════════════════════════════════════════════════════════════════════
   paperless-mcp:
-    image: ${PAPERLESS_MCP_IMAGE:-ghcr.io/fidonis/paperless-mcp-rbac:0.1.0}
+    image: ${PAPERLESS_MCP_IMAGE:-ghcr.io/fidonis/paperless-mcp-rbac:0.1.1}
     restart: unless-stopped
     environment:
       OIDC_ISSUER_URL:              ${OIDC_ISSUER}

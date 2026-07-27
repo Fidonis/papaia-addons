@@ -1,6 +1,0 @@
-- Dokumente:
-    - Paperless-ngx:
-        href: "{{HOMEPAGE_VAR_PAPERLESS_URL}}"
-        description: Existing standalone Paperless-ngx instance
-        icon: paperless-ngx.svg
-        showStats: false

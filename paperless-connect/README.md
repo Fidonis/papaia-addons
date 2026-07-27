@@ -2,8 +2,8 @@
 
 Connects an existing standalone [Paperless-ngx](https://docs.paperless-ngx.com/) instance to [papaia](https://github.com/Fidonis/papaia).
 
-Adds an OIDC/RBAC-secured MCP server for AI-assisted document access via LibreChat, a Keycloak
-client registration, and a Homepage widget — without touching the existing Paperless installation.
+Adds an OIDC/RBAC-secured MCP server for AI-assisted document access via LibreChat and the
+matching Keycloak client registration — without touching the existing Paperless installation.
 
 Use the full [`paperless`](https://github.com/Fidonis/papaia-addon-paperless) add-on if you want
 papaia to manage the Paperless-ngx service, its database, and supporting containers.
@@ -34,8 +34,15 @@ PAPERLESS_HTTP_REMOTE_USER_HEADER_NAME=HTTP_X_PAPAIA_REMOTE_USER
 ```
 
 The header value is the Paperless username assigned during the user's first login (typically
-the `preferred_username` claim from Keycloak). Make sure the Paperless instance only accepts
-this header from trusted sources (firewall rule or Docker network restriction).
+the `preferred_username` claim from Keycloak).
+
+> **Reverse-proxy warning.** If `PAPERLESS_MCP_PAPERLESS_URL` points at a public URL, the MCP
+> server's requests pass through your reverse proxy. That proxy must **forward**
+> `X-Papaia-Remote-User` — if it strips the header, every MCP request arrives unauthenticated
+> and per-user RBAC silently stops working. At the same time the header must be **rejected on
+> requests from anywhere else**, or an external client could impersonate any Paperless user by
+> setting it themselves. Restrict it to the MCP server's source address, or give the MCP server
+> a private path to Paperless that bypasses the public ingress.
 
 ---
 
@@ -76,8 +83,7 @@ Edit `.env` and fill in all `CHANGE_ME` values:
 |---|---|
 | `OIDC_ISSUER` | Keycloak issuer URL (same value as `AUTH_HOST` in your papaia setup) |
 | `PAPAIA_CONFIG_DIR` | Path to the directory created by `papaia-ctl setup` |
-| `PAPERLESS_PUBLIC_URL` | Browser-facing URL of your existing Paperless instance |
-| `PAPERLESS_MCP_PAPERLESS_URL` | URL of the existing Paperless instance reachable from within Docker (e.g. `http://host.docker.internal:8000`) |
+| `PAPERLESS_MCP_PAPERLESS_URL` | URL of the existing Paperless instance as reachable from the MCP container — often the public URL (e.g. `https://docs.example.com`), or `http://host.docker.internal:8000` when it runs on the same host |
 | `KC_MCP_PAPERLESS_CLIENT_SECRET` | Keycloak client secret for `mcp-paperless` (any random value; the client does not use it for login) |
 
 ### 2. Register Keycloak client
@@ -152,17 +158,6 @@ mcpSettings:
     # ... keep any existing entries
 ```
 
-### 5. Wire the Homepage widget (Seam 4)
-
-The Homepage integration uses the `{{HOMEPAGE_VAR_PAPERLESS_URL}}` variable. Set this env var
-on the Homepage container so it resolves to your existing Paperless public URL:
-
-```yaml
-# In your Homepage service environment (e.g. papaia-config/overlay/services/homepage/...)
-environment:
-  HOMEPAGE_VAR_PAPERLESS_URL: "https://docs.example.com"
-```
-
 ---
 
 ## Stopping and removing
@@ -199,8 +194,10 @@ docker compose -f addons/paperless-connect/docker-compose.yml down
   Keycloak before forwarding requests to Paperless. No admin credentials are stored in the MCP
   layer.
 - **Remote-user auth:** `paperless-mcp` acts on behalf of the authenticated user by forwarding
-  the `X-Papaia-Remote-User` header. Ensure your existing Paperless instance only accepts this
-  header from trusted sources (Docker network boundary or firewall rule).
+  the `X-Papaia-Remote-User` header. Because this add-on does not own your ingress, securing that
+  header is the operator's responsibility — see the reverse-proxy warning under
+  [Prerequisites](#prerequisites). Accepting it from any source is equivalent to letting anyone
+  log in as any Paperless user.
 
 ---
 
@@ -210,5 +207,7 @@ docker compose -f addons/paperless-connect/docker-compose.yml down
   addon alongside other MCP addons. The papaia config render merges dict keys but replaces lists
   wholesale; a fix is tracked in the papaia repository.
 - **Keycloak client registration** is not automated in this version; see step 2 above.
-- **Homepage `HOMEPAGE_VAR_PAPERLESS_URL`** must be set manually on the Homepage container; see
-  step 5 above.
+- **No Homepage entry.** Homepage resolves link targets from `HOMEPAGE_VAR_*` on its own
+  container, and an add-on has no mechanism to set those (the config render deep-merges without
+  env substitution, and the override generator only writes network attachments). A dashboard
+  entry for the external Paperless has to be added to the Homepage overlay by hand.

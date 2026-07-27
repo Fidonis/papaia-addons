@@ -42,13 +42,6 @@ env_prompts:
     default_from_core: OIDC_ISSUER
     type: url
 
-  # ── Existing Paperless-ngx instance ───────────────────────────────────────
-  PAPERLESS_PUBLIC_URL:
-    label: "Paperless public URL"
-    hint: "Browser-facing URL of your existing Paperless instance (used for the Homepage widget)"
-    default: "http://host.docker.internal:8000"
-    type: url
-
   # ── Keycloak OIDC client secret ───────────────────────────────────────────
   KC_MCP_PAPERLESS_CLIENT_SECRET:
     label: "Keycloak client secret (mcp-paperless)"
@@ -67,8 +60,8 @@ env_prompts:
     min: 0
 
   PAPERLESS_MCP_PAPERLESS_URL:
-    label: "Paperless internal URL (reachable from Docker)"
-    hint: "URL of the existing Paperless instance reachable from within Docker (e.g. http://host.docker.internal:8000)"
+    label: "Paperless URL"
+    hint: "URL of the existing Paperless instance as reachable from the MCP container — often the public URL (e.g. https://docs.example.com)"
     type: url
 
   PAPERLESS_MCP_REMOTE_USER_HEADER:
@@ -116,4 +109,3 @@ integration:
       librechat:
         - integration/infra/keycloak/librechat-audience-mapper.json
   librechat: integration/ai/librechat/librechat.yaml
-  homepage: integration/services/homepage/config/services.yaml

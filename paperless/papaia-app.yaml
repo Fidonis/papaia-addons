@@ -211,5 +211,4 @@ integration:
       librechat:
         - integration/infra/keycloak/librechat-audience-mapper.json
   librechat: integration/ai/librechat/librechat.yaml
-  homepage: integration/services/homepage/config/services.yaml
   nginx: integration/infra/nginx/paperless.conf

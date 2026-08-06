@@ -1,0 +1,82 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# papaia-addon-qdrant-connect — Docker Compose
+# by Fidonis GmbH · https://fidonis.de
+#
+# Connects an existing standalone Qdrant instance to the papaia stack via an
+# OIDC/RBAC-secured MCP server for AI-assisted vector search.
+#
+# The MCP server runs on the isolated papaia-qdrant-connect-net bridge
+# network. papaia-ctl generates a compose override that attaches librechat
+# and litellm to this network (Seam 1). The existing Qdrant instance is
+# reached via QDRANT_MCP_QDRANT_URL (typically
+# http://host.docker.internal:6333 when it runs on the same host).
+#
+# env_file reads from .env in the same directory as this file, materialized
+# from the config bundle by `papaia-ctl addon start qdrant-connect`.
+# ═══════════════════════════════════════════════════════════════════════════
+services:
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  #  MCP SERVER — OIDC/RBAC-secured Qdrant proxy
+  #
+  #  Validates the caller's Keycloak Bearer token, resolves the caller's roles
+  #  against the ACL collection stored inside Qdrant, and derives a Qdrant JWT
+  #  scoped to exactly the collections (and documents) those roles grant. No
+  #  static Qdrant credentials are handed to the caller.
+  #
+  #  LibreChat connects via the generated Seam-1 network override
+  #  (papaia-qdrant-connect-net attached to the librechat container). OIDC
+  #  token validation reaches Keycloak at OIDC_ISSUER via extra_hosts, and the
+  #  existing Qdrant instance is resolved the same way when it runs on the
+  #  same host.
+  # ═══════════════════════════════════════════════════════════════════════════
+  qdrant-mcp:
+    image: ${QDRANT_MCP_IMAGE:-ghcr.io/fidonis/qdrant-mcp-rbac:0.3.0}
+    restart: unless-stopped
+    environment:
+      OIDC_ISSUER_URL:           ${OIDC_ISSUER}
+      OIDC_AUDIENCE:             ${QDRANT_MCP_OIDC_AUDIENCE:-mcp-qdrant}
+      OIDC_JWKS_CACHE_TTL:       ${QDRANT_MCP_OIDC_JWKS_CACHE_TTL:-3600}
+      QDRANT_URL:                ${QDRANT_MCP_QDRANT_URL}
+      # Doubles as Qdrant's api-key — the two values MUST be identical or every
+      # derived JWT is rejected by the existing instance.
+      QDRANT_JWT_SECRET:         ${QDRANT_MCP_QDRANT_JWT_SECRET}
+      QDRANT_JWT_TTL:            ${QDRANT_MCP_QDRANT_JWT_TTL:-3600}
+      EMBEDDING_API_URL:         ${QDRANT_MCP_EMBEDDING_API_URL:-http://litellm:4000/v1}
+      EMBEDDING_API_KEY:         ${QDRANT_MCP_EMBEDDING_API_KEY}
+      EMBEDDING_META_COLLECTION: ${QDRANT_MCP_EMBEDDING_META_COLLECTION:-_collection_meta}
+      RBAC_ADMIN_ROLE:           ${QDRANT_MCP_RBAC_ADMIN_ROLE:-qdrant-admin}
+      RBAC_ACL_COLLECTION:       ${QDRANT_MCP_RBAC_ACL_COLLECTION:-_rbac_acl}
+      RBAC_ACL_CACHE_TTL:        ${QDRANT_MCP_RBAC_ACL_CACHE_TTL:-60}
+      RBAC_SERVICE_TOKEN_TTL:    ${QDRANT_MCP_RBAC_SERVICE_TOKEN_TTL:-300}
+      MCP_HOST:                  ${QDRANT_MCP_HOST:-0.0.0.0}
+      MCP_PORT:                  ${QDRANT_MCP_PORT:-8000}
+      MCP_PATH:                  ${QDRANT_MCP_PATH:-/mcp}
+      LOG_LEVEL:                 ${QDRANT_MCP_LOG_LEVEL:-INFO}
+      # CA cert for httpx/ssl — trusts the bundled Keycloak self-signed cert.
+      # Cleared to "" via overrides/addons/ when auth_provider=external_oidc.
+      SSL_CERT_FILE:             /certs/local-ca.crt
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ${PAPAIA_CONFIG_DIR}/certs:/certs:ro
+    networks:
+      - papaia-qdrant-connect-net
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health',timeout=3).status==200 else 1)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    labels:
+      de.fidonis.module: papaia-qdrant-connect
+      de.fidonis.role: mcp-server
+
+networks:
+  papaia-qdrant-connect-net:
+    driver: bridge
+    name: papaia-qdrant-connect-net

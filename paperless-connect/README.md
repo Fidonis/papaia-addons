@@ -224,7 +224,3 @@ docker compose -f addons/paperless-connect/docker-compose.yml down
   addon alongside other MCP addons. The papaia config render merges dict keys but replaces lists
   wholesale; a fix is tracked in the papaia repository.
 - **Keycloak client registration** is not automated in this version; see step 2 above.
-- **No Homepage entry.** Homepage resolves link targets from `HOMEPAGE_VAR_*` on its own
-  container, and an add-on has no mechanism to set those (the config render deep-merges without
-  env substitution, and the override generator only writes network attachments). A dashboard
-  entry for the external Paperless has to be added to the Homepage overlay by hand.

@@ -1,0 +1,134 @@
+name: qdrant-connect
+version: 1.0.0
+addon_repo: papaia-addon-qdrant-connect
+requires:
+  # Contract generation this addon is built against; checked against the
+  # core's ADDON_API window by cores that support compatibility gating.
+  addon_api: 1
+# Fallback axis for cores that do not read `requires` yet.
+papaia_compat: ">=0.8.0"
+description: "OIDC/RBAC MCP server for an existing standalone Qdrant instance"
+
+networks:
+  app_network: papaia-qdrant-connect-net
+  # litellm is attached because the MCP server embeds natural-language queries
+  # through it (search_collection_by_text); librechat is the MCP client.
+  attach: [librechat, litellm]
+
+# Env vars pointing at the bundled-Keycloak CA cert (mounted from
+# $PAPAIA_CONFIG_DIR/certs). papaia-ctl clears them via a generated override
+# when auth_provider=external_oidc, so requests/httpx fall back to the
+# system CA bundle instead of failing on the absent local-ca.crt.
+local_ca_env:
+  qdrant-mcp: [SSL_CERT_FILE]
+
+# Per-variable metadata: label (human-readable prompt text), hint (secondary
+# explanation), default (overrides .env.example value), default_from_core
+# (pulls value from core .env by key name), type (text|integer|url|decimal),
+# secret (bool — true forces masking, false opts out of name heuristic),
+# min/max (numeric bounds for integer/decimal), pattern (regex for text).
+# All fields are optional; add-ons without env_prompts entries continue to
+# work unchanged (readers ignore unknown manifest keys).
+env_prompts:
+
+  # ── Core OIDC ─────────────────────────────────────────────────────────────
+  PAPAIA_CONFIG_DIR:
+    label: "papAIa config directory"
+    hint: "Path to the directory created by papaia-ctl setup (PAPAIA_CONFIG_DIR)"
+    default_from_core: PAPAIA_CONFIG_DIR
+    type: text
+
+  OIDC_ISSUER:
+    label: "Keycloak issuer URL"
+    hint: "Browser-facing URL, must match OIDC_ISSUER from core setup"
+    default_from_core: OIDC_ISSUER
+    type: url
+
+  # ── MCP server — OIDC ─────────────────────────────────────────────────────
+  QDRANT_MCP_OIDC_AUDIENCE:
+    label: "MCP server token audience"
+    hint: "Must match the mcp-qdrant-audience mapper on the LibreChat Keycloak client"
+    type: text
+
+  QDRANT_MCP_OIDC_JWKS_CACHE_TTL:
+    label: "JWKS cache TTL (seconds)"
+    type: integer
+    min: 0
+
+  # ── MCP server — Qdrant connection ────────────────────────────────────────
+  QDRANT_MCP_QDRANT_URL:
+    label: "Qdrant URL"
+    hint: "URL of the existing Qdrant instance as reachable from the MCP container — e.g. http://host.docker.internal:6333"
+    type: url
+
+  QDRANT_MCP_QDRANT_JWT_SECRET:
+    label: "Qdrant JWT signing secret"
+    hint: "Must be identical to the existing Qdrant's service.api_key"
+    secret: true
+
+  QDRANT_MCP_QDRANT_JWT_TTL:
+    label: "Derived Qdrant JWT TTL (seconds)"
+    type: integer
+    min: 60
+
+  # ── MCP server — Embeddings ───────────────────────────────────────────────
+  QDRANT_MCP_EMBEDDING_API_URL:
+    label: "Embeddings endpoint"
+    hint: "OpenAI-compatible base URL including the API prefix; LiteLLM inside papAIa is http://litellm:4000/v1"
+    type: url
+
+  QDRANT_MCP_EMBEDDING_API_KEY:
+    label: "Embeddings API key"
+    hint: "LITELLM_MASTER_KEY from <papaia-config>/ai/litellm/.env when using LiteLLM"
+    secret: true
+
+  QDRANT_MCP_EMBEDDING_META_COLLECTION:
+    label: "Embedding metadata collection"
+    hint: "Qdrant collection holding the per-collection embedding model; auto-created"
+    type: text
+
+  # ── MCP server — RBAC ─────────────────────────────────────────────────────
+  QDRANT_MCP_RBAC_ADMIN_ROLE:
+    label: "Break-glass admin role"
+    hint: "Keycloak realm role whose members receive a global Qdrant manage token"
+    type: text
+
+  QDRANT_MCP_RBAC_ACL_COLLECTION:
+    label: "ACL collection"
+    hint: "Qdrant collection holding the role grants; auto-created on first access"
+    type: text
+
+  QDRANT_MCP_RBAC_ACL_CACHE_TTL:
+    label: "ACL cache TTL (seconds)"
+    type: integer
+    min: 1
+
+  QDRANT_MCP_RBAC_SERVICE_TOKEN_TTL:
+    label: "ACL service token TTL (seconds)"
+    type: integer
+    min: 10
+
+  # ── MCP server — Listener ─────────────────────────────────────────────────
+  QDRANT_MCP_PORT:
+    label: "MCP server port"
+    type: integer
+    min: 1
+    max: 65535
+
+  QDRANT_MCP_PATH:
+    label: "MCP endpoint path"
+    type: text
+
+  QDRANT_MCP_LOG_LEVEL:
+    label: "MCP log level"
+    hint: "One of: DEBUG, INFO, WARNING, ERROR"
+    type: text
+
+integration:
+  keycloak:
+    clients:
+      - integration/infra/keycloak/mcp-qdrant.json
+    client_mappers:
+      librechat:
+        - integration/infra/keycloak/librechat-audience-mapper.json
+  librechat: integration/ai/librechat/librechat.yaml

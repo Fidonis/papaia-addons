@@ -123,16 +123,13 @@ env_prompts:
     label: "Auto-create account on first SSO login"
     type: text
 
-  PAPERLESS_SOCIAL_ACCOUNT_GROUPS_SYNC:
+  PAPERLESS_SOCIAL_ACCOUNT_SYNC_GROUPS:
     label: "Sync Keycloak realm roles to Paperless groups on login"
+    hint: "Groups must already exist in Paperless; the sync does not create them"
     type: text
 
-  PAPERLESS_SOCIAL_ACCOUNT_GROUPS_CLAIM:
+  PAPERLESS_SOCIAL_ACCOUNT_SYNC_GROUPS_CLAIM:
     label: "Keycloak claim that carries the group names"
-    type: text
-
-  PAPERLESS_SOCIAL_ACCOUNT_ADMIN_GROUP:
-    label: "Keycloak realm role mapped to Paperless admins"
     type: text
 
   # ── Paperless-ngx — Document processing ───────────────────────────────────

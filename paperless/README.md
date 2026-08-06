@@ -13,9 +13,9 @@ AI-assisted document access via LibreChat, and a Keycloak SSO login for Paperles
 
 | Service | Port | Description |
 |---|---|---|
-| `paperless` | `8010` (configurable) | Paperless-ngx web UI and API |
+| `paperless` | `8010` (configurable) | Paperless-ngx 3.0.5 web UI and API |
 | `paperless-mcp` | internal | OIDC/RBAC-secured MCP server for LibreChat |
-| `paperless-broker` | internal | Redis task broker |
+| `paperless-broker` | internal | Valkey task broker |
 | `paperless-db` | internal | PostgreSQL database |
 | `paperless-gotenberg` | internal | Office/email → PDF conversion |
 | `paperless-tika` | internal | Text extraction |
@@ -82,6 +82,16 @@ In the Keycloak admin UI, create two clients in the `papaia` realm:
 - No redirect URIs
 - All flows disabled
 - (see `integration/infra/keycloak/mcp-paperless.json`)
+
+**Role → group mapping:**
+The `groups` protocol mapper puts the user's realm roles into the token, and
+Paperless assigns the user to the identically named Paperless groups on every
+login. Paperless only matches groups that **already exist** — it never creates
+them. Create the groups you want to drive from Keycloak (e.g. `admin`) once
+under *Paperless → Admin → Groups* and give them the permissions the
+corresponding realm role should carry. Paperless has no setting that grants
+superuser status from a claim; break-glass superuser access stays
+`PAPERLESS_ADMIN_USER` / `PAPERLESS_ADMIN_PASSWORD`.
 
 **Audience mapper on the `librechat` client:**
 Add a protocol mapper of type *Audience* to the existing `librechat` client:
@@ -153,6 +163,15 @@ mcpSettings:
 See `integration/infra/nginx/paperless.conf` for an Nginx configuration reference.
 In the Nginx Proxy Manager web UI, add a new proxy host pointing to `paperless:8000`
 on the `papaia-paperless-net` network.
+
+Behind a reverse proxy, Paperless needs to know which hop carries the real
+client IP — it uses that for login rate limiting, and gets it wrong by
+default, which surfaces as `403 Forbidden` on the login POST. Uncomment
+`PAPERLESS_TRUSTED_PROXIES` and `PAPERLESS_ALLAUTH_TRUSTED_PROXY_COUNT` in
+`.env` if you hit this. The count is the number of proxy hops in
+`X-Forwarded-For`, which is not necessarily the number of listed IPs. Leave
+both commented out when unused: an empty value is not the same as an unset
+one and aborts startup.
 
 ---
 

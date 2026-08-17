@@ -1,0 +1,7 @@
+{
+  "_comment": "Reference only — realm roles are not part of the addon integration contract and are not imported automatically. Create it in the Keycloak Admin UI (Realm roles -> Create role) or POST this body to /admin/realms/papaia/roles, then assign it to the operators allowed to drive ingestion from LibreChat. Must match QI_OIDC_OPERATOR_ROLE. Without it every MCP call is rejected with 403 missing_operator_role.",
+  "name": "qdrant-ingest-operator",
+  "description": "Operator for the Qdrant ingestion service — holders may list jobs, inspect runs, and trigger reindexing over MCP",
+  "composite": false,
+  "clientRole": false
+}

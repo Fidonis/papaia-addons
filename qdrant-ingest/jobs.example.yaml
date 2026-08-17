@@ -1,0 +1,129 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# papaia-addon-qdrant-ingest — example job catalog
+# by Fidonis GmbH · https://fidonis.de
+#
+# Copy this file to <papaia-config>/addons/qdrant-ingest/jobs.yaml, where the
+# add-on mounts it read-only as /config/jobs.yaml. Nothing copies it for you,
+# and the container starts cleanly without it (degraded, HTTP 200 on /health).
+#
+# Credential values never belong in this file. Every secret-typed field
+# accepts only the form ${env:QI_SECRET_<NAME>} and resolves against the
+# add-on .env; a literal is a hard validation error naming job and field.
+#
+# Changes are picked up on start, on POST /v1/config/reload, and by an
+# mtime poll every QI_JOBS_RELOAD_INTERVAL seconds. A catalog that fails
+# validation never takes effect — the previous one keeps serving and the
+# errors appear under GET /v1/config and in /health.config_error.
+# ═══════════════════════════════════════════════════════════════════════════
+version: 1
+
+# Merged underneath every job; job-level keys win.
+defaults:
+  embedding:
+    # Must match the model recorded for the target collection. One Qdrant
+    # collection holds vectors of exactly one model.
+    model: nomic-embed-text
+    batch_size: 32
+  chunking:
+    strategy: auto
+    words: 400
+    overlap: 50
+  filters:
+    exclude:
+      - "**/.DS_Store"
+      - "**/*.tmp"
+      - "**/*.part"
+      - "**/~$*"
+      - "**/.git/**"
+    max_file_bytes: 209715200
+  schedule:
+    timezone: UTC
+    jitter_seconds: 30
+    misfire_grace_seconds: 300
+  safety:
+    # Abort the delete phase if a run would remove more than this share of
+    # the job's known documents, and if the source tree comes back empty
+    # while the state is not. Both guard against a half-synchronised tree.
+    max_delete_ratio: 0.25
+    empty_source_guard: true
+
+jobs:
+
+  # ── Local mount → own collection, nightly update ──────────────────────────
+  # Reads the directory bound at /data/local (QI_LOCAL_MOUNT) in place; there
+  # is no synchronisation step for local sources.
+  - id: local-docs
+    enabled: true
+    description: "Documents from the mounted local directory"
+    source:
+      type: local
+      label: local-docs
+      path: /data/local
+    filters:
+      include:
+        - "**/*.md"
+        - "**/*.pdf"
+        - "**/*.docx"
+        - "**/*.xlsx"
+    target:
+      collection: local-docs
+      # Optional; consumed by the MCP layer's document-level access control.
+      # acl_tags: ["dept:ops", "confidentiality:internal"]
+    # upsert adds new documents, re-embeds changed ones, and removes those
+    # that vanished from the source. Use 'append' to never update or delete,
+    # 'full' to rebuild the job's slice of the collection from scratch.
+    mode: upsert
+    schedule:
+      cron: "0 3 * * *"
+    # Whether an LLM may trigger a full reindex of this job over MCP.
+    mcp_allow_full: false
+
+  # ── S3 bucket → shared knowledge base, nightly upsert ─────────────────────
+  # Set the credentials as QI_SECRET_* keys in the add-on .env, then enable.
+  # - id: acme-reports
+  #   enabled: false
+  #   description: "Quarterly reports from the corporate S3 bucket"
+  #   source:
+  #     type: s3
+  #     # The label becomes the authority in each point's source URI and must
+  #     # be unique among the jobs writing to the same collection.
+  #     label: acme-reports
+  #     bucket: acme-corp-reports
+  #     prefix: published/
+  #     provider: AWS
+  #     region: eu-central-1
+  #     access_key_id: ${env:QI_SECRET_S3_ACCESS_KEY}
+  #     secret_access_key: ${env:QI_SECRET_S3_SECRET_KEY}
+  #   filters:
+  #     include: ["**/*.pdf", "**/*.docx", "**/*.xlsx", "**/*.pptx"]
+  #     exclude: ["**/drafts/**"]
+  #   target:
+  #     collection: corporate-knowledge
+  #     acl_tags: ["dept:finance", "confidentiality:internal"]
+  #   mode: upsert
+  #   schedule:
+  #     cron: "0 2 * * *"
+  #   chunking:
+  #     strategy: auto
+  #     words: 512
+  #     overlap: 64
+
+  # ── WebDAV → same collection, different slice ─────────────────────────────
+  # - id: hr-policies
+  #   enabled: false
+  #   source:
+  #     type: webdav
+  #     label: nextcloud-hr
+  #     url: https://cloud.example.com/remote.php/dav/files/svc-ingest/HR
+  #     vendor: nextcloud
+  #     user: svc-ingest
+  #     pass: ${env:QI_SECRET_NEXTCLOUD_APP_PASSWORD}
+  #   filters:
+  #     include: ["**/*.md", "**/*.pdf", "**/*.docx"]
+  #   target:
+  #     collection: corporate-knowledge
+  #     acl_tags: ["dept:hr", "confidentiality:internal"]
+  #   mode: upsert
+  #   schedule:
+  #     cron: "*/30 * * * *"
+  #   mcp_allow_full: false

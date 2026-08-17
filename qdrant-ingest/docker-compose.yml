@@ -1,0 +1,170 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# papaia-addon-qdrant-ingest — Docker Compose
+# by Fidonis GmbH · https://fidonis.de
+#
+# Scheduled multi-source document ingestion into an existing Qdrant, with an
+# Apache Tika sidecar for text extraction.
+#
+# Both services run on the isolated papaia-qdrant-ingest-net bridge network.
+# papaia-ctl generates a compose override that attaches librechat and litellm
+# to this network (Seam 1). Qdrant is not an attachable core service, so the
+# vector database is reached over QI_QDRANT_URL plus extra_hosts — the same
+# path qdrant-connect uses for an existing instance.
+#
+# There is no published host port by default: this is a control plane, not a
+# data plane. See the commented ports: block below.
+#
+# env_file reads from .env in the same directory as this file, materialized
+# from the config bundle by `papaia-ctl addon start qdrant-ingest`.
+# ═══════════════════════════════════════════════════════════════════════════
+services:
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  #  INGESTER — scheduler, control plane, and everything stateful
+  #
+  #  Owns the job catalog, the APScheduler run engine, the embedded rclone
+  #  binary, the Tika calls, chunking, embedding, the Qdrant writes, and the
+  #  SQLite state. Exposes a token-authenticated REST API and an OIDC-secured
+  #  MCP endpoint on one port.
+  #
+  #  The ingester writes to Qdrant directly rather than through the MCP
+  #  server: _collection_meta must be written on every run, and the MCP
+  #  server refuses writes to its system collections.
+  # ═══════════════════════════════════════════════════════════════════════════
+  qdrant-ingest:
+    image: ${QI_INGEST_IMAGE:-ghcr.io/fidonis/qdrant-ingest:0.1.1}
+    restart: unless-stopped
+    # Jobs stop cooperatively between documents; give them room to finish.
+    stop_grace_period: 60s
+    # Unlike the other add-ons this one reads the .env file into the container
+    # as well, not just into compose's interpolation context: operators may
+    # append arbitrary QI_SECRET_<NAME> keys for their own sources, and those
+    # names are unknown here, so they cannot be listed under environment:.
+    # required: false covers the window before the first addon start
+    # materializes the bundle .env into this directory.
+    env_file:
+      - path: ./.env
+        required: false
+    environment:
+      # ── Qdrant ────────────────────────────────────────────────────────────
+      QI_QDRANT_URL:             ${QI_QDRANT_URL:-http://host.docker.internal:6333}
+      QI_QDRANT_API_KEY:         ${QI_QDRANT_API_KEY}
+      # ── Embeddings ────────────────────────────────────────────────────────
+      QI_EMBEDDING_API_URL:      ${QI_EMBEDDING_API_URL:-http://litellm:4000/v1}
+      QI_EMBEDDING_API_KEY:      ${QI_EMBEDDING_API_KEY}
+      QI_EMBEDDING_MODEL:        ${QI_EMBEDDING_MODEL:-nomic-embed-text}
+      QI_EMBED_META_COLLECTION:  ${QI_EMBED_META_COLLECTION:-_collection_meta}
+      QI_RBAC_ACL_COLLECTION:    ${QI_RBAC_ACL_COLLECTION:-_rbac_acl}
+      QI_EMBED_BATCH_SIZE:       ${QI_EMBED_BATCH_SIZE:-32}
+      QI_EMBED_RETRIES:          ${QI_EMBED_RETRIES:-3}
+      QI_EMBED_CONCURRENCY:      ${QI_EMBED_CONCURRENCY:-2}
+      QI_EMBED_RPS:              ${QI_EMBED_RPS:-0}
+      # ── Job catalog ───────────────────────────────────────────────────────
+      # /config is the addon's bundle directory in $PAPAIA_CONFIG_DIR, mounted
+      # read-only below. Nothing copies jobs.yaml there — the container starts
+      # degraded but healthy while the file is missing.
+      QI_JOBS_FILE:              ${QI_JOBS_FILE:-/config/jobs.yaml}
+      QI_JOBS_RELOAD_INTERVAL:   ${QI_JOBS_RELOAD_INTERVAL:-30}
+      # ── Text extraction ───────────────────────────────────────────────────
+      QI_TIKA_URL:               ${QI_TIKA_URL:-http://qdrant-ingest-tika:9998}
+      QI_TIKA_TIMEOUT:           ${QI_TIKA_TIMEOUT:-300}
+      QI_TIKA_OCR_LANGUAGE:      ${QI_TIKA_OCR_LANGUAGE:-deu+eng}
+      QI_TIKA_PDF_OCR_STRATEGY:  ${QI_TIKA_PDF_OCR_STRATEGY:-auto}
+      QI_TIKA_SNIFF_UNKNOWN:     ${QI_TIKA_SNIFF_UNKNOWN:-false}
+      QI_MIN_CHARS_PER_PAGE:     ${QI_MIN_CHARS_PER_PAGE:-100}
+      QI_MAX_FILE_BYTES:         ${QI_MAX_FILE_BYTES:-209715200}
+      QI_SHEET_ROWS:             ${QI_SHEET_ROWS:-40}
+      # ── Scheduling ────────────────────────────────────────────────────────
+      QI_MAX_CONCURRENT_JOBS:    ${QI_MAX_CONCURRENT_JOBS:-2}
+      QI_TIMEZONE:               ${QI_TIMEZONE:-UTC}
+      QI_MISFIRE_GRACE:          ${QI_MISFIRE_GRACE:-300}
+      QI_CRON_JITTER:            ${QI_CRON_JITTER:-30}
+      QI_LOCK_TIMEOUT:           ${QI_LOCK_TIMEOUT:-60}
+      QI_RUN_HISTORY_LIMIT:      ${QI_RUN_HISTORY_LIMIT:-200}
+      QI_SHUTDOWN_GRACE:         ${QI_SHUTDOWN_GRACE:-30}
+      # ── Control plane ─────────────────────────────────────────────────────
+      QI_REST_AUTH:              ${QI_REST_AUTH:-token}
+      QI_API_TOKEN:              ${QI_API_TOKEN}
+      QI_HTTP_HOST:              ${QI_HTTP_HOST:-0.0.0.0}
+      QI_HTTP_PORT:              ${QI_HTTP_PORT:-8300}
+      QI_MCP_PATH:               ${QI_MCP_PATH:-/mcp}
+      QI_METRICS_ENABLED:        ${QI_METRICS_ENABLED:-true}
+      QI_METRICS_AUTH:           ${QI_METRICS_AUTH:-true}
+      QI_LOG_LEVEL:              ${QI_LOG_LEVEL:-INFO}
+      # ── MCP over OIDC ─────────────────────────────────────────────────────
+      # An empty OIDC_ISSUER disables the MCP endpoint; the REST plane stays up.
+      OIDC_ISSUER:               ${OIDC_ISSUER}
+      QI_OIDC_AUDIENCE:          ${QI_OIDC_AUDIENCE:-mcp-qdrant-ingest}
+      QI_OIDC_OPERATOR_ROLE:     ${QI_OIDC_OPERATOR_ROLE:-qdrant-ingest-operator}
+      QI_OIDC_JWKS_CACHE_TTL:    ${QI_OIDC_JWKS_CACHE_TTL:-3600}
+      # CA cert for httpx/ssl — trusts the bundled Keycloak self-signed cert.
+      # Cleared to "" via overrides/addons/ when auth_provider=external_oidc.
+      SSL_CERT_FILE:             /certs/local-ca.crt
+    extra_hosts:
+      # Reaches both Qdrant and Keycloak when they run on this host.
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - qdrant-ingest-tika
+    volumes:
+      # rclone landing zone, one subdirectory per source label.
+      - qi-cache:/data/cache
+      # SQLite state (document fingerprints, run history) and rclone.conf.
+      - qi-state:/data/state
+      # The addon's bundle directory, mounted as a directory rather than as a
+      # single file: a file bind on a not-yet-existing host path makes Docker
+      # create a directory there, and it would pin an inode, so a jobs.yaml
+      # written or editor-replaced after container creation would never become
+      # visible inside — which is exactly what the reload poll depends on.
+      - ${PAPAIA_CONFIG_DIR}/addons/qdrant-ingest:/config:ro
+      - ${PAPAIA_CONFIG_DIR}/certs:/certs:ro
+      # Documents for sources of type 'local'. The default is a directory the
+      # install step always creates, so a fresh install never fails on it;
+      # point QI_LOCAL_MOUNT at the real document directory.
+      - ${QI_LOCAL_MOUNT:-${PAPAIA_CONFIG_DIR}/addons/qdrant-ingest}:/data/local:ro
+    networks:
+      - papaia-qdrant-ingest-net
+    # No healthcheck here on purpose: the image ships one that resolves
+    # QI_HTTP_PORT at runtime, so it stays correct when the port is changed.
+    # /health answers 200 whenever the process can serve — a degraded
+    # container reports its reason in the body instead of restart-looping.
+    #
+    # The control plane is a mutation API guarded by a static token; publishing
+    # it is an operator decision, not the default. Uncomment and set
+    # QI_EXT_PORT to expose it, and keep it bound to a trusted interface.
+    # ports:
+    #   - "${HOST_IP:-127.0.0.1}:${QI_EXT_PORT:-8300}:${QI_HTTP_PORT:-8300}"
+    labels:
+      de.fidonis.module: papaia-qdrant-ingest
+      de.fidonis.role: ingester
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  #  TEXT EXTRACTOR — Apache Tika server
+  #
+  #  A JVM plus roughly 200 parsers, kept out of the ingester image so that
+  #  image stays small and a parser OOM has its own blast radius. The entry
+  #  point forks parser child processes, so an OOM kills the child and the
+  #  server answers 5xx instead of dying.
+  #
+  #  Same image family as the paperless add-on, so the layers are often on
+  #  disk already. OCR for scanned PDFs needs the -full variant, which also
+  #  wants a larger heap — see QI_TIKA_IMAGE in .env.example.
+  # ═══════════════════════════════════════════════════════════════════════════
+  qdrant-ingest-tika:
+    image: ${QI_TIKA_IMAGE:-docker.io/apache/tika:3.2.3.0}
+    restart: unless-stopped
+    environment:
+      JAVA_OPTS: "-Xmx${QI_TIKA_HEAP:-2g}"
+    networks:
+      - papaia-qdrant-ingest-net
+    labels:
+      de.fidonis.module: papaia-qdrant-ingest
+      de.fidonis.role: text-extractor
+
+networks:
+  papaia-qdrant-ingest-net:
+    driver: bridge
+    name: papaia-qdrant-ingest-net
+
+volumes:
+  qi-cache:
+  qi-state:

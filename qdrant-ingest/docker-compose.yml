@@ -35,7 +35,7 @@ services:
   #  server refuses writes to its system collections.
   # ═══════════════════════════════════════════════════════════════════════════
   qdrant-ingest:
-    image: ${QI_INGEST_IMAGE:-ghcr.io/fidonis/qdrant-ingest:0.1.2}
+    image: ${QI_INGEST_IMAGE:-ghcr.io/fidonis/qdrant-ingest:0.2.0}
     restart: unless-stopped
     # Jobs stop cooperatively between documents; give them room to finish.
     stop_grace_period: 60s

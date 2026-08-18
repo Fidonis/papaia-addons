@@ -6,13 +6,16 @@
 # Apache Tika sidecar for text extraction.
 #
 # Both services run on the isolated papaia-qdrant-ingest-net bridge network.
-# papaia-ctl generates a compose override that attaches librechat and litellm
-# to this network (Seam 1). Qdrant is not an attachable core service, so the
-# vector database is reached over QI_QDRANT_URL plus extra_hosts — the same
-# path qdrant-connect uses for an existing instance.
+# papaia-ctl generates a compose override that attaches librechat, litellm and
+# (optionally) nginx-proxy-manager to this network (Seam 1). Qdrant is not an
+# attachable core service, so the vector database is reached over
+# QI_QDRANT_URL plus extra_hosts — the same path qdrant-connect uses for an
+# existing instance.
 #
-# There is no published host port by default: this is a control plane, not a
-# data plane. See the commented ports: block below.
+# There is no published host port: this is a control plane, not a data plane.
+# See the commented ports: block below. The web interface is reachable only
+# once nginx-proxy-manager is attached and a proxy host is configured for
+# /ui — see integration/infra/nginx/qdrant-ingest.conf.
 #
 # env_file reads from .env in the same directory as this file, materialized
 # from the config bundle by `papaia-ctl addon start qdrant-ingest`.
@@ -36,6 +39,12 @@ services:
     restart: unless-stopped
     # Jobs stop cooperatively between documents; give them room to finish.
     stop_grace_period: 60s
+    # The container now writes into a host bind mount (the catalog/
+    # subdirectory below), so it has to run as the host user that owns
+    # $PAPAIA_CONFIG_DIR. UID/GID are stamped into the core .env at
+    # `papaia-ctl setup`, same mechanism papaia-manager's own compose file
+    # uses for the same reason.
+    user: "${UID:-1000}:${GID:-1000}"
     # Unlike the other add-ons this one reads the .env file into the container
     # as well, not just into compose's interpolation context: operators may
     # append arbitrary QI_SECRET_<NAME> keys for their own sources, and those
@@ -61,9 +70,13 @@ services:
       QI_EMBED_RPS:              ${QI_EMBED_RPS:-0}
       # ── Job catalog ───────────────────────────────────────────────────────
       # /config is the addon's bundle directory in $PAPAIA_CONFIG_DIR, mounted
-      # read-only below. Nothing copies jobs.yaml there — the container starts
-      # degraded but healthy while the file is missing.
-      QI_JOBS_FILE:              ${QI_JOBS_FILE:-/config/jobs.yaml}
+      # read-only below; /config/catalog is the one part of it mounted
+      # read-write, so the web interface can save jobs.yaml without the
+      # container being able to touch its own .env. Nothing copies jobs.yaml
+      # there on install — the container starts degraded but healthy while
+      # the file is missing. A deployment that still has it at the older
+      # /config/jobs.yaml path keeps being served from there, read-only.
+      QI_JOBS_FILE:              ${QI_JOBS_FILE:-/config/catalog/jobs.yaml}
       QI_JOBS_RELOAD_INTERVAL:   ${QI_JOBS_RELOAD_INTERVAL:-30}
       # ── Text extraction ───────────────────────────────────────────────────
       QI_TIKA_URL:               ${QI_TIKA_URL:-http://qdrant-ingest-tika:9998}
@@ -97,6 +110,16 @@ services:
       QI_OIDC_AUDIENCE:          ${QI_OIDC_AUDIENCE:-mcp-qdrant-ingest}
       QI_OIDC_OPERATOR_ROLE:     ${QI_OIDC_OPERATOR_ROLE:-qdrant-ingest-operator}
       QI_OIDC_JWKS_CACHE_TTL:    ${QI_OIDC_JWKS_CACHE_TTL:-3600}
+      # ── Web interface ─────────────────────────────────────────────────────
+      # Stays unmounted unless OIDC_ISSUER above and every one of these three
+      # are set — same shape as MCP disabling itself on an empty OIDC_ISSUER.
+      QI_UI_ENABLED:             ${QI_UI_ENABLED:-true}
+      QI_UI_PATH:                ${QI_UI_PATH:-/ui}
+      QI_UI_PUBLIC_URL:          ${QI_UI_PUBLIC_URL:-}
+      QI_UI_CLIENT_ID:           ${QI_UI_CLIENT_ID:-qdrant-ingest-ui}
+      QI_UI_CLIENT_SECRET:       ${QI_UI_CLIENT_SECRET:-}
+      QI_UI_SESSION_SECRET:      ${QI_UI_SESSION_SECRET:-}
+      QI_UI_SESSION_TTL:         ${QI_UI_SESSION_TTL:-28800}
       # CA cert for httpx/ssl — trusts the bundled Keycloak self-signed cert.
       # Cleared to "" via overrides/addons/ when auth_provider=external_oidc.
       SSL_CERT_FILE:             /certs/local-ca.crt
@@ -116,6 +139,11 @@ services:
       # written or editor-replaced after container creation would never become
       # visible inside — which is exactly what the reload poll depends on.
       - ${PAPAIA_CONFIG_DIR}/addons/qdrant-ingest:/config:ro
+      # The one writable part of the bundle: the job catalog the web
+      # interface edits. Docker mounts the nested bind on top of the parent,
+      # so everything else under /config -- most importantly .env -- stays
+      # read-only from inside the container.
+      - ${PAPAIA_CONFIG_DIR}/addons/qdrant-ingest/catalog:/config/catalog
       - ${PAPAIA_CONFIG_DIR}/certs:/certs:ro
       # Documents for sources of type 'local'. The default is a directory the
       # install step always creates, so a fresh install never fails on it;

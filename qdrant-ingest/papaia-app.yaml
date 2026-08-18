@@ -11,13 +11,16 @@ description: "Scheduled multi-source document ingestion into an existing Qdrant"
 
 networks:
   app_network: papaia-qdrant-ingest-net
-  # litellm provides the embeddings endpoint; librechat is the MCP client.
+  # litellm provides the embeddings endpoint; librechat is the MCP client;
+  # nginx-proxy-manager is optional and only needed to publish the web
+  # interface (/ui) -- drop it if the interface is reached some other way, or
+  # not used at all.
   # Qdrant is deliberately absent: `attach` is validated against core compose
   # services, so one addon cannot attach to another. The vector database is
   # reached over QI_QDRANT_URL plus extra_hosts instead, which is what lets
   # this addon serve the qdrant addon, qdrant-connect, and a remote instance
   # through one code path.
-  attach: [librechat, litellm]
+  attach: [librechat, litellm, nginx-proxy-manager]
 
 # Env vars pointing at the bundled-Keycloak CA cert (mounted from
 # $PAPAIA_CONFIG_DIR/certs). papaia-ctl clears them via a generated override
@@ -147,14 +150,43 @@ env_prompts:
     hint: "One of: DEBUG, INFO, WARNING, ERROR"
     type: text
 
-# No env_replace_secrets: the MCP server is a bearer-token resource server
-# and holds no Keycloak client secret, same as the qdrant add-on.
+  # ── Web interface ─────────────────────────────────────────────────────────
+  # Optional: the interface stays unmounted unless every one of these plus
+  # OIDC_ISSUER is set, mirroring how the MCP endpoint disables itself on an
+  # empty OIDC_ISSUER.
+  QI_UI_PUBLIC_URL:
+    label: "Web interface public URL"
+    hint: "Browser-facing URL, e.g. https://ingest.example.com; unset leaves the interface off"
+    type: url
+
+  QI_UI_CLIENT_ID:
+    label: "Web interface Keycloak client ID"
+    type: text
+
+  QI_UI_CLIENT_SECRET:
+    label: "Web interface Keycloak client secret"
+    hint: "Copy from Keycloak Admin UI -> Clients -> qdrant-ingest-ui -> Credentials -> Client Secret"
+    secret: true
+
+  QI_UI_SESSION_SECRET:
+    label: "Web interface session-cookie secret"
+    hint: "Generated on install; rotating it signs every operator out"
+    secret: true
+
+# The MCP server holds no Keycloak client secret -- it is a bearer-token
+# resource server, same as the qdrant add-on. The web interface is a login
+# client and does hold one.
+env_replace_secrets:
+  QI_UI_CLIENT_SECRET:
+    hint: "Keycloak Admin UI -> Clients -> qdrant-ingest-ui -> Credentials -> Client Secret"
 
 integration:
   keycloak:
     clients:
       - integration/infra/keycloak/mcp-qdrant-ingest.json
+      - integration/infra/keycloak/qdrant-ingest-ui.json
     client_mappers:
       librechat:
         - integration/infra/keycloak/librechat-audience-mapper.json
   librechat: integration/ai/librechat/librechat.yaml
+  nginx: integration/infra/nginx/qdrant-ingest.conf

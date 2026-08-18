@@ -1,0 +1,18 @@
+mcpServers:
+  QdrantIngest:
+    title: 'Qdrant Ingest'
+    description: 'Inspect and trigger the document ingestion jobs feeding your Qdrant collections.'
+    type: streamable-http
+    url: http://qdrant-ingest:8300/mcp
+    headers:
+      Authorization: "Bearer {{LIBRECHAT_OPENID_ACCESS_TOKEN}}"
+    # Lazy init: qdrant-ingest validates a real user Bearer token and requires
+    # the operator realm role. Without startup: false, LibreChat attempts to
+    # connect at process start with the unsubstituted placeholder, sees a 401,
+    # then falls back to MCP dynamic OAuth discovery (which qdrant-ingest does
+    # not speak) and burns 120 s in OAuth handling timeout per retry cycle.
+    startup: false
+
+mcpSettings:
+  allowedDomains:
+    - "http://qdrant-ingest:8300"

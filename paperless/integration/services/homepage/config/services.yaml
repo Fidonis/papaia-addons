@@ -1,7 +1,0 @@
-- Dokumente:
-    - Paperless-ngx:
-        href: "{{HOMEPAGE_VAR_HOST}}:8010"
-        description: Self-hosted document management with OCR
-        icon: paperless-ngx.svg
-        container: papaia-paperless-1
-        showStats: true

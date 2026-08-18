@@ -1,0 +1,16 @@
+{
+  "clientId": "qdrant-ingest-ui",
+  "name": "Qdrant Ingest — Web UI",
+  "description": "Operator web interface for qdrant-ingest — OIDC login via Keycloak; reuses the qdrant-ingest-operator realm role",
+  "enabled": true,
+  "clientAuthenticatorType": "client-secret",
+  "secret": "${env.QI_UI_CLIENT_SECRET}",
+  "redirectUris": ["*"],
+  "webOrigins": ["+"],
+  "standardFlowEnabled": true,
+  "implicitFlowEnabled": false,
+  "directAccessGrantsEnabled": false,
+  "publicClient": false,
+  "protocol": "openid-connect",
+  "fullScopeAllowed": true
+}

@@ -1,0 +1,7 @@
+{
+  "_comment": "Reference only — realm roles are not part of the addon integration contract and are not imported automatically. Create it in the Keycloak Admin UI (Realm roles -> Create role) or POST this body to /admin/realms/papaia/roles, then assign it to the break-glass operator. Must match QDRANT_MCP_RBAC_ADMIN_ROLE.",
+  "name": "qdrant-admin",
+  "description": "Break-glass admin for the Qdrant MCP server — holders receive a global Qdrant manage token and can edit the ACL collection",
+  "composite": false,
+  "clientRole": false
+}

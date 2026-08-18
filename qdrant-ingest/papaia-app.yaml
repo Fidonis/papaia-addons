@@ -1,0 +1,192 @@
+name: qdrant-ingest
+version: 1.0.0
+addon_repo: papaia-addon-qdrant-ingest
+requires:
+  # Contract generation this addon is built against; checked against the
+  # core's ADDON_API window by cores that support compatibility gating.
+  addon_api: 1
+# Fallback axis for cores that do not read `requires` yet.
+papaia_compat: ">=0.8.0"
+description: "Scheduled multi-source document ingestion into an existing Qdrant"
+
+networks:
+  app_network: papaia-qdrant-ingest-net
+  # litellm provides the embeddings endpoint; librechat is the MCP client;
+  # nginx-proxy-manager is optional and only needed to publish the web
+  # interface (/ui) -- drop it if the interface is reached some other way, or
+  # not used at all.
+  # Qdrant is deliberately absent: `attach` is validated against core compose
+  # services, so one addon cannot attach to another. The vector database is
+  # reached over QI_QDRANT_URL plus extra_hosts instead, which is what lets
+  # this addon serve the qdrant addon, qdrant-connect, and a remote instance
+  # through one code path.
+  attach: [librechat, litellm, nginx-proxy-manager]
+
+# Env vars pointing at the bundled-Keycloak CA cert (mounted from
+# $PAPAIA_CONFIG_DIR/certs). papaia-ctl clears them via a generated override
+# when auth_provider=external_oidc, so httpx falls back to the system CA
+# bundle instead of failing on the absent local-ca.crt.
+local_ca_env:
+  qdrant-ingest: [SSL_CERT_FILE]
+
+# Per-variable metadata: label (human-readable prompt text), hint (secondary
+# explanation), default (overrides .env.example value), default_from_core
+# (pulls value from core .env by key name), type (text|integer|url|decimal),
+# secret (bool — true forces masking, false opts out of name heuristic),
+# min/max (numeric bounds for integer/decimal), pattern (regex for text).
+# All fields are optional; add-ons without env_prompts entries continue to
+# work unchanged (readers ignore unknown manifest keys).
+env_prompts:
+
+  # ── Core OIDC ─────────────────────────────────────────────────────────────
+  PAPAIA_CONFIG_DIR:
+    label: "papAIa config directory"
+    hint: "Path to the directory created by papaia-ctl setup (PAPAIA_CONFIG_DIR)"
+    default_from_core: PAPAIA_CONFIG_DIR
+    type: text
+
+  OIDC_ISSUER:
+    label: "Keycloak issuer URL"
+    hint: "Browser-facing URL, must match OIDC_ISSUER from core setup; unset disables MCP"
+    default_from_core: OIDC_ISSUER
+    type: url
+
+  # ── Qdrant connection ─────────────────────────────────────────────────────
+  QI_QDRANT_URL:
+    label: "Qdrant URL"
+    hint: "http://host.docker.internal:6333 when the qdrant add-on runs on this host"
+    type: url
+
+  QI_QDRANT_API_KEY:
+    label: "Qdrant api-key"
+    hint: "QDRANT_JWT_SECRET from <papaia-config>/addons/qdrant/.env"
+    secret: true
+
+  # ── Embeddings ────────────────────────────────────────────────────────────
+  QI_EMBEDDING_API_URL:
+    label: "Embeddings endpoint"
+    hint: "OpenAI-compatible base URL; LiteLLM inside papAIa is http://litellm:4000/v1"
+    type: url
+
+  QI_EMBEDDING_API_KEY:
+    label: "Embeddings API key"
+    hint: "LITELLM_MASTER_KEY from <papaia-config>/ai/litellm/.env"
+    secret: true
+
+  QI_EMBEDDING_MODEL:
+    label: "Default embedding model"
+    hint: "Must be served by the endpoint above; one model per Qdrant collection"
+    type: text
+
+  # ── Control plane — REST ──────────────────────────────────────────────────
+  QI_API_TOKEN:
+    label: "REST API bearer token"
+    hint: "Generated on install; required on every /v1 call"
+    secret: true
+
+  QI_HTTP_PORT:
+    label: "Control-plane port"
+    type: integer
+    min: 1
+    max: 65535
+
+  # ── Control plane — MCP over OIDC ─────────────────────────────────────────
+  QI_MCP_PATH:
+    label: "MCP endpoint path"
+    type: text
+
+  QI_OIDC_AUDIENCE:
+    label: "MCP token audience"
+    hint: "Must match the mcp-qdrant-ingest-audience mapper on the LibreChat client"
+    type: text
+
+  QI_OIDC_OPERATOR_ROLE:
+    label: "Operator realm role"
+    hint: "Keycloak realm role required on every MCP call; create it manually"
+    type: text
+
+  # ── Sources ───────────────────────────────────────────────────────────────
+  QI_LOCAL_MOUNT:
+    label: "Local documents directory"
+    hint: "Host path mounted read-only at /data/local for sources of type 'local'"
+    type: text
+
+  QI_SECRET_1:
+    label: "Source credential slot 1"
+    hint: "Referenced from jobs.yaml as ${env:QI_SECRET_1}; leave empty if unused"
+    secret: true
+
+  QI_SECRET_2:
+    label: "Source credential slot 2"
+    hint: "Referenced from jobs.yaml as ${env:QI_SECRET_2}; leave empty if unused"
+    secret: true
+
+  QI_SECRET_3:
+    label: "Source credential slot 3"
+    hint: "Referenced from jobs.yaml as ${env:QI_SECRET_3}; leave empty if unused"
+    secret: true
+
+  # ── Scheduling and throughput ─────────────────────────────────────────────
+  QI_TIMEZONE:
+    label: "Scheduler timezone"
+    hint: "IANA name, for example Europe/Berlin"
+    type: text
+
+  QI_MAX_CONCURRENT_JOBS:
+    label: "Concurrent ingest jobs"
+    type: integer
+    min: 1
+    max: 16
+
+  QI_EMBED_CONCURRENCY:
+    label: "Concurrent embedding requests"
+    hint: "Independent of the job count — the embeddings endpoint is one shared bottleneck"
+    type: integer
+    min: 1
+    max: 32
+
+  QI_LOG_LEVEL:
+    label: "Log level"
+    hint: "One of: DEBUG, INFO, WARNING, ERROR"
+    type: text
+
+  # ── Web interface ─────────────────────────────────────────────────────────
+  # Optional: the interface stays unmounted unless every one of these plus
+  # OIDC_ISSUER is set, mirroring how the MCP endpoint disables itself on an
+  # empty OIDC_ISSUER.
+  QI_UI_PUBLIC_URL:
+    label: "Web interface public URL"
+    hint: "Browser-facing URL, e.g. https://ingest.example.com; unset leaves the interface off"
+    type: url
+
+  QI_UI_CLIENT_ID:
+    label: "Web interface Keycloak client ID"
+    type: text
+
+  QI_UI_CLIENT_SECRET:
+    label: "Web interface Keycloak client secret"
+    hint: "Copy from Keycloak Admin UI -> Clients -> qdrant-ingest-ui -> Credentials -> Client Secret"
+    secret: true
+
+  QI_UI_SESSION_SECRET:
+    label: "Web interface session-cookie secret"
+    hint: "Generated on install; rotating it signs every operator out"
+    secret: true
+
+# The MCP server holds no Keycloak client secret -- it is a bearer-token
+# resource server, same as the qdrant add-on. The web interface is a login
+# client and does hold one.
+env_replace_secrets:
+  QI_UI_CLIENT_SECRET:
+    hint: "Keycloak Admin UI -> Clients -> qdrant-ingest-ui -> Credentials -> Client Secret"
+
+integration:
+  keycloak:
+    clients:
+      - integration/infra/keycloak/mcp-qdrant-ingest.json
+      - integration/infra/keycloak/qdrant-ingest-ui.json
+    client_mappers:
+      librechat:
+        - integration/infra/keycloak/librechat-audience-mapper.json
+  librechat: integration/ai/librechat/librechat.yaml
+  nginx: integration/infra/nginx/qdrant-ingest.conf

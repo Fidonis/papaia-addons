@@ -67,7 +67,7 @@ services:
     healthcheck:
       test:
         - CMD-SHELL
-        - "wget -qO- --tries=1 --timeout=3 http://localhost:5678/healthz 2>/dev/null | grep -q ok"
+        - "wget -qO- --tries=1 --timeout=3 http://127.0.0.1:5678/healthz 2>/dev/null | grep -q ok"
       interval: 30s
       timeout: 10s
       retries: 3
@@ -98,9 +98,12 @@ services:
     networks:
       - papaia-n8n-net
     healthcheck:
+      # 127.0.0.1, not localhost: the shim listens on IPv4 only, while
+      # localhost resolves to ::1 first inside the container -- which makes
+      # the probe fail with "connection refused" against a healthy server.
       test:
         - CMD-SHELL
-        - "wget -qO- --tries=1 --timeout=3 http://localhost:5679/healthz 2>/dev/null | grep -q ok"
+        - "wget -qO- --tries=1 --timeout=3 http://127.0.0.1:5679/healthz 2>/dev/null | grep -q ok"
       interval: 30s
       timeout: 10s
       retries: 3

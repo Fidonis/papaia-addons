@@ -1,0 +1,33 @@
+{
+  "clientId": "n8n",
+  "name": "n8n",
+  "description": "n8n workflow automation — SSO gate in front of the editor",
+  "enabled": true,
+  "clientAuthenticatorType": "client-secret",
+  "secret": "${env.KC_N8N_CLIENT_SECRET}",
+  "redirectUris": ["*"],
+  "webOrigins": ["+"],
+  "standardFlowEnabled": true,
+  "implicitFlowEnabled": false,
+  "directAccessGrantsEnabled": false,
+  "serviceAccountsEnabled": false,
+  "publicClient": false,
+  "protocol": "openid-connect",
+  "fullScopeAllowed": true,
+  "protocolMappers": [
+    {
+      "name": "groups",
+      "protocol": "openid-connect",
+      "protocolMapper": "oidc-usermodel-realm-role-mapper",
+      "consentRequired": false,
+      "config": {
+        "multivalued": "true",
+        "userinfo.token.claim": "true",
+        "id.token.claim": "true",
+        "access.token.claim": "true",
+        "claim.name": "groups",
+        "jsonType.label": "String"
+      }
+    }
+  ]
+}

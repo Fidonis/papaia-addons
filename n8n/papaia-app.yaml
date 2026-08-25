@@ -14,12 +14,19 @@ description: "n8n workflow automation behind a Keycloak SSO gate"
 
 networks:
   app_network: papaia-n8n-net
+  # keycloak is required, not optional: the SSO gate exchanges the auth code
+  # for a token server-side against OIDC_TOKEN_URL, which the core sets to the
+  # internal https://keycloak:8443/... name. Without the attachment that name
+  # does not resolve and every login dies in the callback with a 500 --
+  # "lookup keycloak: no such host" -- after the user has already typed a
+  # correct password, which is the most confusing point at which to fail.
+  #
   # nginx-proxy-manager publishes the browser-facing editor. LibreChat is
   # deliberately absent: this add-on ships no MCP server, so nothing in the
   # core needs to reach n8n over the Docker network. Workflows call out to
   # the core's public endpoints (LiteLLM, LibreChat) the same way they call
   # any other HTTP API.
-  attach: [nginx-proxy-manager]
+  attach: [keycloak, nginx-proxy-manager]
 
 # Env vars pointing at the bundled-Keycloak CA cert (mounted from
 # $PAPAIA_CONFIG_DIR/certs). papaia-ctl clears them via a generated override

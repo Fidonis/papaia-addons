@@ -15,10 +15,11 @@ networks:
   # through it (search_collection_by_text); librechat is the MCP client.
   attach: [librechat, litellm]
 
-# Env vars pointing at the bundled-Keycloak CA cert (mounted from
-# $PAPAIA_CONFIG_DIR/certs). papaia-ctl clears them via a generated override
-# when auth_provider=external_oidc, so requests/httpx fall back to the
-# system CA bundle instead of failing on the absent local-ca.crt.
+# SSL_CERT_FILE defaults to empty (system trust store) in docker-compose.yml;
+# it is opt-in via QDRANT_MCP_SSL_CERT_FILE for a local-dev core whose Keycloak
+# uses the bundled self-signed CA. This entry additionally makes papaia-ctl
+# force it empty via a generated override when auth_provider=external_oidc,
+# where $PAPAIA_CONFIG_DIR/certs is absent.
 local_ca_env:
   qdrant-mcp: [SSL_CERT_FILE]
 
@@ -54,6 +55,11 @@ env_prompts:
     label: "JWKS cache TTL (seconds)"
     type: integer
     min: 0
+
+  QDRANT_MCP_SSL_CERT_FILE:
+    label: "Extra CA file for the MCP server's outbound TLS"
+    hint: "Leave empty for publicly-trusted Keycloak/Qdrant certificates (the common case, a published bundled Keycloak included); set to /certs/local-ca.crt only for a local-dev core using the bundled self-signed Keycloak CA"
+    type: text
 
   # ── MCP server — Qdrant connection ────────────────────────────────────────
   QDRANT_MCP_QDRANT_URL:

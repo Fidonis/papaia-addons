@@ -53,9 +53,18 @@ services:
       MCP_PORT:                  ${QDRANT_MCP_PORT:-8000}
       MCP_PATH:                  ${QDRANT_MCP_PATH:-/mcp}
       LOG_LEVEL:                 ${QDRANT_MCP_LOG_LEVEL:-INFO}
-      # CA cert for httpx/ssl — trusts the bundled Keycloak self-signed cert.
-      # Cleared to "" via overrides/addons/ when auth_provider=external_oidc.
-      SSL_CERT_FILE:             /certs/local-ca.crt
+      # Extra CA file for the MCP server's outbound TLS (OIDC discovery + JWKS,
+      # the existing Qdrant instance, and the embeddings endpoint). The HTTP
+      # client REPLACES its trust store with this file rather than adding to
+      # it, so it must be empty whenever OIDC_ISSUER or QDRANT_MCP_QDRANT_URL
+      # carries a publicly-trusted certificate -- the common case for a connect
+      # add-on, including a bundled papaia Keycloak published through a reverse
+      # proxy. Default empty = system trust store. Set
+      # QDRANT_MCP_SSL_CERT_FILE=/certs/local-ca.crt only for a local-dev core
+      # whose Keycloak is served at host.docker.internal with the bundled
+      # self-signed CA. papaia-ctl also forces this to "" for
+      # auth_provider=external_oidc via overrides/addons/ (see local_ca_env).
+      SSL_CERT_FILE:             ${QDRANT_MCP_SSL_CERT_FILE:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:

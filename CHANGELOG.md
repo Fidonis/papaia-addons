@@ -10,6 +10,24 @@ based on merged pull requests; this file mirrors the published releases.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-09-04
+
+### Added
+- **qdrant-ingest add-on**, raised to image `0.3.0`, replacing the single
+  hard-wired Qdrant instance and default embedding model with named
+  connections (`connections.yaml`, API keys encrypted at rest) and a required
+  `target.connection` per job. In-place upgrades need manual migration: set
+  `QI_CONNECTIONS_SECRET`, drop the old `QI_QDRANT_*`/`QI_EMBEDDING_MODEL`
+  variables, create `connections.yaml`, and add `target.connection` to every
+  job (breaking change).
+
+### Fixed
+- **paperless-connect and qdrant-connect add-ons** no longer hardcode their
+  MCP server's `SSL_CERT_FILE` to the local CA, which broke OIDC token
+  verification behind a publicly-trusted Keycloak certificate. The cert path
+  is now configurable via `PAPERLESS_MCP_SSL_CERT_FILE` /
+  `QDRANT_MCP_SSL_CERT_FILE` (default empty).
+
 ## [1.0.0] - 2026-08-18
 
 ### Added

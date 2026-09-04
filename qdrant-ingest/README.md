@@ -23,25 +23,29 @@ Qdrant instance running somewhere else entirely.
 Two things must be in place before the first ingestion run, and neither is
 created by this add-on.
 
-**1. A reachable Qdrant instance and its api-key.** The ingester writes points
-and the per-collection embedding metadata directly to the Qdrant REST API, so
-it holds the instance's api-key rather than a scoped token. With the `qdrant`
-add-on on the same host that is `QDRANT_JWT_SECRET` from
-`<papaia-config>/addons/qdrant/.env`, reachable at
-`http://host.docker.internal:6333`.
+**1. At least one Qdrant instance, configured as a named connection.** The
+ingester writes points and the per-collection embedding metadata directly to
+the Qdrant REST API, so a connection holds the instance's api-key rather than a
+scoped token. Connections are declared in
+`<papaia-config>/addons/qdrant-ingest/catalog/connections.yaml` and managed
+from the web interface, where the api-key is stored encrypted (keyed by
+`QI_CONNECTIONS_SECRET`). With the `qdrant` add-on on the same host the URL is
+`http://host.docker.internal:6333` and the api-key is `QDRANT_JWT_SECRET` from
+`<papaia-config>/addons/qdrant/.env`.
 
-**2. An embedding model that the endpoint actually serves.** The default
-`nomic-embed-text` is defined in the core's LiteLLM configuration, but the
-matching model download in `src/ai/localai/models.txt` is commented out by
-default. Enable it — or point `QI_EMBEDDING_MODEL` at a model that is served —
-before running a job; otherwise the dimension probe fails with a 404 from
-LiteLLM that does not name the cause.
+**2. An embedding model that the endpoint actually serves.** The model is a
+`jobs.yaml` concern — `defaults.embedding.model` or a per-job override, with no
+environment fallback. The usual default `nomic-embed-text` is defined in the
+core's LiteLLM configuration, but the matching model download in
+`src/ai/localai/models.txt` is commented out by default. Enable it — or set a
+model that is served — before running a job; otherwise the dimension probe
+fails with a 404 from LiteLLM that does not name the cause.
 
 A Qdrant collection holds vectors of exactly one model: the `_collection_meta`
 record the ingester writes carries one `embedding_model` per collection, and
 the MCP layer reads it to embed queries the same way. Several jobs may write
-into one collection, but they must agree on the model — a mismatch is a
-validation error at catalog load time.
+into one collection, but they must agree on both the model and the connection —
+a mismatch is a validation error at catalog load time.
 
 ---
 
@@ -63,10 +67,11 @@ is attached and a proxy host is configured for `/ui` — see
 ## How it reaches Qdrant
 
 An add-on cannot attach to another add-on's network — `attach:` is validated
-against the core's compose services — so this add-on reaches the vector
-database over `QI_QDRANT_URL` plus `extra_hosts`, exactly as `qdrant-connect`
-reaches a standalone instance. That is not a workaround: it is why the same
-code path serves the `qdrant` add-on, `qdrant-connect`, and a remote Qdrant.
+against the core's compose services — so this add-on reaches every vector
+database over the URL of its named connection plus `extra_hosts`, exactly as
+`qdrant-connect` reaches a standalone instance. That is not a workaround: it is
+why the same code path serves the `qdrant` add-on, `qdrant-connect`, and remote
+Qdrant instances.
 
 If you would rather avoid the host-port detour when the `qdrant` add-on runs
 on the same machine, add your own override that also joins this container to
@@ -83,7 +88,7 @@ networks:
     external: true
 ```
 
-Then set `QI_QDRANT_URL=http://qdrant:6333`. Files in
+Then set the connection's `url` to `http://qdrant:6333`. Files in
 `overrides/addons/` named `docker-compose.qdrant-ingest-*.override.yml` are
 applied automatically by `papaia-ctl addon start`. This is an operator
 decision, so it is documented here rather than shipped.
@@ -130,23 +135,30 @@ hostname would be a mistake.
 
 ---
 
-## `jobs.yaml`
+## `jobs.yaml` and `connections.yaml`
 
-The job catalog lives at
-`<papaia-config>/addons/qdrant-ingest/catalog/jobs.yaml` and is mounted
-read-write into the container at `/config/catalog/jobs.yaml` — the one part
-of the bundle directory the container may write; the bundle root stays
-read-only because it also holds this addon's `.env`. Edit it directly, or
-through the [web interface](#web-interface)'s catalog editor once that is
-set up. Nothing creates the file for you on install:
+Both live in `<papaia-config>/addons/qdrant-ingest/catalog/` and are mounted
+read-write into the container at `/config/catalog/` — the one part of the
+bundle directory the container may write; the bundle root stays read-only
+because it also holds this addon's `.env`. Edit them directly, or through the
+[web interface](#web-interface) once that is set up. Nothing creates the files
+for you on install:
 
 ```bash
+cp qdrant-ingest/connections.example.yaml \
+   "$PAPAIA_CONFIG_DIR/addons/qdrant-ingest/catalog/connections.yaml"
 cp qdrant-ingest/jobs.example.yaml \
    "$PAPAIA_CONFIG_DIR/addons/qdrant-ingest/catalog/jobs.yaml"
 ```
 
-The container starts cleanly without it — zero jobs registered, REST, MCP
-and the web interface all up, `/health` answering HTTP 200 with
+`connections.yaml` names each Qdrant instance a job may write to; every job's
+`target.connection` must resolve to one, and all jobs on one collection must
+name the same connection. Connection api-keys are stored **encrypted**
+(`enc:1:…`, keyed by `QI_CONNECTIONS_SECRET`) — set them from the web
+interface, not by hand.
+
+The container starts cleanly without either file — zero jobs registered, REST,
+MCP and the web interface all up, `/health` answering HTTP 200 with
 `"status": "degraded"` and a `config_error`. That is on purpose: a missing
 catalog must not put the container into a restart loop.
 
@@ -162,16 +174,28 @@ catalog must not put the container into a restart loop.
 > mv "$PAPAIA_CONFIG_DIR/addons/qdrant-ingest/jobs.yaml" "$PAPAIA_CONFIG_DIR/addons/qdrant-ingest/catalog/jobs.yaml"
 > ```
 
+> **Upgrading to image `0.3.0` (connections).** The image no longer reads
+> `QI_QDRANT_URL` / `QI_QDRANT_API_KEY` / `QI_EMBEDDING_MODEL`. Before
+> restarting: set `QI_CONNECTIONS_SECRET` in the bundle `.env` (generated on a
+> fresh install), create `catalog/connections.yaml` with a connection named
+> e.g. `primary` (set its api-key from the web interface), add
+> `target.connection: primary` to every job in `jobs.yaml`, and move the
+> embedding model into `defaults.embedding.model` if it was only in the env.
+> A catalog without `target.connection` fails to load and the previous one
+> keeps serving until it is fixed.
+
 ---
 
 ## Web interface
 
 An operator UI at `QI_UI_PATH` (default `/ui`) on port `QI_HTTP_PORT` —
 the same process as REST and MCP, not a separate container. It shows the
-health of Qdrant, the embeddings endpoint and Tika, the job catalog and
-run history, the collections and the leftovers of a renamed job — and it
-is the surface that can **write** `jobs.yaml`: create, edit and delete
-jobs through a form, or edit the file directly with comments preserved.
+health of the Qdrant connections, the embeddings endpoint and Tika, the job
+catalog and run history, the collections and the leftovers of a renamed job —
+and it is the surface that **writes** `jobs.yaml` and `connections.yaml`:
+create, edit and delete jobs and connections through a form (with a
+**Test connection** button), or edit `jobs.yaml` directly with comments
+preserved.
 
 It stays unmounted unless `OIDC_ISSUER`, `QI_UI_PUBLIC_URL`,
 `QI_UI_CLIENT_SECRET` and `QI_UI_SESSION_SECRET` are all set — the same
@@ -208,21 +232,23 @@ neither belongs on a public hostname.
 ### Running as the host user
 
 The container now writes into a host bind mount — the `catalog/`
-subdirectory the web interface saves `jobs.yaml` into — so it runs as
-`${UID:-1000}:${GID:-1000}`, the same values `papaia-ctl setup` stamps
+subdirectory the web interface saves `jobs.yaml` and `connections.yaml` into —
+so it runs as `${UID:-1000}:${GID:-1000}`, the same values `papaia-ctl setup`
+stamps
 into the core `.env` for `papaia-manager`. If the host uid is not 1000
 **and** the `qi-cache` / `qi-state` volumes already exist from an older
 install, they were created with the old ownership; chown them once or
 recreate them.
 
-**Credentials never go in this file.** Every secret-typed field accepts only
-the form `${env:QI_SECRET_<NAME>}` and resolves against the add-on `.env`; a
-literal is a hard validation error naming the job and the field. Only names
-matching `^QI_SECRET_[A-Z0-9_]+$` resolve, so a tampered catalog cannot read
-`QI_QDRANT_API_KEY` or `QI_API_TOKEN`. Three empty slots ship in
+**Source credentials never go in `jobs.yaml`.** Every secret-typed source field
+accepts only the form `${env:QI_SECRET_<NAME>}` and resolves against the add-on
+`.env`; a literal is a hard validation error naming the job and the field. Only
+names matching `^QI_SECRET_[A-Z0-9_]+$` resolve, so a tampered catalog cannot
+read `QI_CONNECTIONS_SECRET` or `QI_API_TOKEN`. Three empty slots ship in
 `.env.example`, and any number of further `QI_SECRET_<NAME>` keys may be
 appended to the bundle `.env` — the seeding step never removes or overwrites
-keys you added.
+keys you added. Qdrant api-keys are handled separately: they live in
+`connections.yaml`, encrypted.
 
 Changes take effect on start, on `POST /v1/config/reload` (or the
 `reload_ingest_config` tool), and through an mtime poll every
@@ -263,8 +289,10 @@ papaia-ctl addon install qdrant-ingest --path=addons/qdrant-ingest
 
 # 4. Edit CHANGE_ME values in <papaia-config>/addons/qdrant-ingest/.env
 
-# 5. Place the job catalog (or skip this and use the web interface's
-#    catalog editor once it is set up -- see Web interface below)
+# 5. Place the connection list and the job catalog (or skip and use the web
+#    interface once it is set up -- see Web interface below)
+cp addons/qdrant-ingest/connections.example.yaml \
+   "$PAPAIA_CONFIG_DIR/addons/qdrant-ingest/catalog/connections.yaml"
 cp addons/qdrant-ingest/jobs.example.yaml \
    "$PAPAIA_CONFIG_DIR/addons/qdrant-ingest/catalog/jobs.yaml"
 
@@ -307,8 +335,7 @@ with a strong random value (`openssl rand -hex 24`):
 |---|---|
 | `OIDC_ISSUER` | Keycloak issuer URL (same value as `AUTH_HOST` in your papaia setup) |
 | `PAPAIA_CONFIG_DIR` | Path to the directory created by `papaia-ctl setup` |
-| `QI_QDRANT_URL` | Qdrant URL as reachable from this container |
-| `QI_QDRANT_API_KEY` | Qdrant api-key — `QDRANT_JWT_SECRET` when using the `qdrant` add-on |
+| `QI_CONNECTIONS_SECRET` | Encrypts the Qdrant api-keys in `connections.yaml`; any strong random value |
 | `QI_EMBEDDING_API_KEY` | `LITELLM_MASTER_KEY` from `<papaia-config>/ai/litellm/.env` |
 | `QI_API_TOKEN` | Bearer token for the REST control plane |
 | `QI_UI_PUBLIC_URL` | Browser-facing URL of the web interface, e.g. `https://ingest.example.com`; leave blank (not `CHANGE_ME`) to keep the interface off |
@@ -495,8 +522,9 @@ vector database, not here.
   cookie carries no access to either.
 - **The catalog subdirectory is the one writable path in the bundle
   mount.** `/config/catalog` is read-write so the web interface can save
-  `jobs.yaml`; everything else under `/config`, including this add-on's
-  own `.env`, stays read-only from inside the container.
+  `jobs.yaml` and `connections.yaml`; everything else under `/config`,
+  including this add-on's own `.env`, stays read-only from inside the
+  container.
 - **The container runs as the host uid** (`UID`/`GID` from the core
   `.env`, default 1000), not a fixed system uid, because it now writes
   to that bind mount.
@@ -534,6 +562,12 @@ vector database, not here.
 - **One embedding model per collection.** Changing a collection's model means
   a `full` run with `full_scope: collection` — that is the only path that
   recreates the collection with a new vector dimension.
+- **One connection per collection.** A collection lives in exactly one Qdrant,
+  so all enabled jobs on it must name the same `target.connection`.
+- **Orphan cleanup needs the connection still defined.** A renamed job's
+  points are counted and deleted across every connection currently in
+  `connections.yaml`; if the connection was removed, its orphan points stay
+  (the state rows are still cleaned).
 - **OCR for scanned PDFs and images needs the `-full` Tika image**, selected
   via `QI_TIKA_IMAGE`. The default image skips image-only pages, records them
   as `skipped_no_text`, and does not retry until the file changes.
@@ -546,4 +580,4 @@ vector database, not here.
   container as `/config/.env` regardless — those values are already in
   the process environment, so no additional secret is exposed by the
   mount. Only the nested `catalog/` subdirectory is writable, and only
-  `jobs.yaml` lives there.
+  `jobs.yaml` and `connections.yaml` live there.

@@ -46,6 +46,28 @@ the `preferred_username` claim from Keycloak).
 
 ---
 
+## TLS trust for the MCP server
+
+`paperless-mcp` runs on an isolated network with no route to the papaia core's
+internal `keycloak:8443`, so it always reaches Keycloak over the public
+`OIDC_ISSUER` URL for OIDC discovery and JWKS. Its HTTP client **replaces** its
+trust store with `PAPERLESS_MCP_SSL_CERT_FILE` when that variable is set — it
+does not add to the system trust store.
+
+| `PAPERLESS_MCP_SSL_CERT_FILE` | When |
+|---|---|
+| *empty* (default) | The Keycloak issuer URL and `PAPERLESS_MCP_PAPERLESS_URL` use publicly-trusted (e.g. Let's Encrypt) certificates. The normal case for a connect add-on, including a bundled papaia Keycloak published through a reverse proxy. |
+| `/certs/local-ca.crt` | Local-dev core only: Keycloak is served at `host.docker.internal` with the bundled self-signed CA. |
+
+With `AUTH_PROVIDER=external_oidc`, `papaia-ctl` additionally forces this
+variable empty via a generated override.
+
+> If the MCP server logs `Unexpected error during OIDC validation` with an
+> `ssl.SSLCertVerificationError` and clients see `auth_internal_error`, this
+> variable is pointed at a CA that does not sign the Keycloak certificate.
+
+---
+
 ## Installation via papaia-ctl
 
 ```bash
@@ -84,6 +106,7 @@ Edit `.env` and fill in all `CHANGE_ME` values:
 | `OIDC_ISSUER` | Keycloak issuer URL (same value as `AUTH_HOST` in your papaia setup) |
 | `PAPAIA_CONFIG_DIR` | Path to the directory created by `papaia-ctl setup` |
 | `PAPERLESS_MCP_PAPERLESS_URL` | URL of the existing Paperless instance as reachable from the MCP container — often the public URL (e.g. `https://docs.example.com`), or `http://host.docker.internal:8000` when it runs on the same host |
+| `PAPERLESS_MCP_SSL_CERT_FILE` | Leave empty unless the Keycloak / Paperless certificates are signed by a private CA — see [TLS trust for the MCP server](#tls-trust-for-the-mcp-server) |
 
 `mcp-paperless` needs no client secret: it is a Bearer-token resource server that verifies
 incoming tokens against Keycloak's public JWKS endpoint and never authenticates itself to

@@ -8,9 +8,10 @@
 # Both services run on the isolated papaia-qdrant-ingest-net bridge network.
 # papaia-ctl generates a compose override that attaches librechat, litellm and
 # (optionally) nginx-proxy-manager to this network (Seam 1). Qdrant is not an
-# attachable core service, so the vector database is reached over
-# QI_QDRANT_URL plus extra_hosts — the same path qdrant-connect uses for an
-# existing instance.
+# attachable core service, so every vector database is reached over its own URL
+# plus extra_hosts — the same path qdrant-connect uses for an existing
+# instance. The instances are declared as named connections in connections.yaml
+# (managed from the web interface), not in this file.
 #
 # There is no published host port: this is a control plane, not a data plane.
 # See the commented ports: block below. The web interface is reachable only
@@ -35,7 +36,7 @@ services:
   #  server refuses writes to its system collections.
   # ═══════════════════════════════════════════════════════════════════════════
   qdrant-ingest:
-    image: ${QI_INGEST_IMAGE:-ghcr.io/fidonis/qdrant-ingest:0.2.0}
+    image: ${QI_INGEST_IMAGE:-ghcr.io/fidonis/qdrant-ingest:0.3.0}
     restart: unless-stopped
     # Jobs stop cooperatively between documents; give them room to finish.
     stop_grace_period: 60s
@@ -55,27 +56,32 @@ services:
       - path: ./.env
         required: false
     environment:
-      # ── Qdrant ────────────────────────────────────────────────────────────
-      QI_QDRANT_URL:             ${QI_QDRANT_URL:-http://host.docker.internal:6333}
-      QI_QDRANT_API_KEY:         ${QI_QDRANT_API_KEY}
       # ── Embeddings ────────────────────────────────────────────────────────
+      # The model is per job in jobs.yaml (defaults.embedding.model, or a job
+      # override), not an environment variable.
       QI_EMBEDDING_API_URL:      ${QI_EMBEDDING_API_URL:-http://litellm:4000/v1}
       QI_EMBEDDING_API_KEY:      ${QI_EMBEDDING_API_KEY}
-      QI_EMBEDDING_MODEL:        ${QI_EMBEDDING_MODEL:-nomic-embed-text}
       QI_EMBED_META_COLLECTION:  ${QI_EMBED_META_COLLECTION:-_collection_meta}
       QI_RBAC_ACL_COLLECTION:    ${QI_RBAC_ACL_COLLECTION:-_rbac_acl}
       QI_EMBED_BATCH_SIZE:       ${QI_EMBED_BATCH_SIZE:-32}
       QI_EMBED_RETRIES:          ${QI_EMBED_RETRIES:-3}
       QI_EMBED_CONCURRENCY:      ${QI_EMBED_CONCURRENCY:-2}
       QI_EMBED_RPS:              ${QI_EMBED_RPS:-0}
+      # ── Connections ───────────────────────────────────────────────────────
+      # Named Qdrant instances are declared in connections.yaml next to
+      # jobs.yaml (both in the read-write catalog/ subdirectory below), managed
+      # from the web interface. QI_CONNECTIONS_SECRET is the key their stored
+      # api-keys are encrypted with; connections without a key work without it.
+      QI_CONNECTIONS_SECRET:     ${QI_CONNECTIONS_SECRET:-}
+      QI_CONNECTIONS_FILE:       ${QI_CONNECTIONS_FILE:-/config/catalog/connections.yaml}
       # ── Job catalog ───────────────────────────────────────────────────────
       # /config is the addon's bundle directory in $PAPAIA_CONFIG_DIR, mounted
       # read-only below; /config/catalog is the one part of it mounted
-      # read-write, so the web interface can save jobs.yaml without the
-      # container being able to touch its own .env. Nothing copies jobs.yaml
-      # there on install — the container starts degraded but healthy while
-      # the file is missing. A deployment that still has it at the older
-      # /config/jobs.yaml path keeps being served from there, read-only.
+      # read-write, so the web interface can save jobs.yaml and connections.yaml
+      # without the container being able to touch its own .env. Nothing copies
+      # the files there on install — the container starts degraded but healthy
+      # while they are missing. A deployment that still has jobs.yaml at the
+      # older /config/jobs.yaml path keeps being served from there, read-only.
       QI_JOBS_FILE:              ${QI_JOBS_FILE:-/config/catalog/jobs.yaml}
       QI_JOBS_RELOAD_INTERVAL:   ${QI_JOBS_RELOAD_INTERVAL:-30}
       # ── Text extraction ───────────────────────────────────────────────────

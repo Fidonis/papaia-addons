@@ -2,13 +2,18 @@
 # papaia-addon-qdrant-ingest — example job catalog
 # by Fidonis GmbH · https://fidonis.de
 #
-# Copy this file to <papaia-config>/addons/qdrant-ingest/jobs.yaml, where the
-# add-on mounts it read-only as /config/jobs.yaml. Nothing copies it for you,
+# Copy this file to <papaia-config>/addons/qdrant-ingest/catalog/jobs.yaml,
+# mounted read-write as /config/catalog/jobs.yaml. Nothing copies it for you,
 # and the container starts cleanly without it (degraded, HTTP 200 on /health).
 #
-# Credential values never belong in this file. Every secret-typed field
+# Each job names the Qdrant it writes to via target.connection. The
+# connections themselves are declared in connections.yaml alongside this file
+# (see connections.example.yaml) and managed from the web interface.
+#
+# Source credential values never belong in this file. Every secret-typed field
 # accepts only the form ${env:QI_SECRET_<NAME>} and resolves against the
 # add-on .env; a literal is a hard validation error naming job and field.
+# (Qdrant api-keys are the exception — those live encrypted in connections.yaml.)
 #
 # Changes are picked up on start, on POST /v1/config/reload, and by an
 # mtime poll every QI_JOBS_RELOAD_INTERVAL seconds. A catalog that fails
@@ -67,6 +72,9 @@ jobs:
         - "**/*.xlsx"
     target:
       collection: local-docs
+      # A name from connections.yaml. Required. All jobs on one collection must
+      # name the same connection.
+      connection: primary
       # Optional; consumed by the MCP layer's document-level access control.
       # acl_tags: ["dept:ops", "confidentiality:internal"]
     # upsert adds new documents, re-embeds changed ones, and removes those
@@ -99,6 +107,7 @@ jobs:
   #     exclude: ["**/drafts/**"]
   #   target:
   #     collection: corporate-knowledge
+  #     connection: primary
   #     acl_tags: ["dept:finance", "confidentiality:internal"]
   #   mode: upsert
   #   schedule:
@@ -122,6 +131,7 @@ jobs:
   #     include: ["**/*.md", "**/*.pdf", "**/*.docx"]
   #   target:
   #     collection: corporate-knowledge
+  #     connection: primary
   #     acl_tags: ["dept:hr", "confidentiality:internal"]
   #   mode: upsert
   #   schedule:

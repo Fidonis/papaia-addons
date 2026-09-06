@@ -18,7 +18,11 @@ papaia to manage the Paperless-ngx service, its database, and supporting contain
 |---|---|---|
 | `paperless-mcp` | internal | OIDC/RBAC-secured MCP server for LibreChat |
 
-All services run on the isolated `papaia-paperless-connect-net` Docker bridge network.
+All services run on the add-on's own isolated Docker bridge network,
+`${PAPAIA_PROJECT:-papaia}-paperless-connect-net` — `papaia-paperless-connect-net` on a
+default single-stack host, or `papaia-<env>-paperless-connect-net` when several papAIa
+deployments share a host. `papaia-ctl` resolves the same value when it generates the
+Seam-1 override.
 
 ---
 
@@ -145,16 +149,18 @@ Add a protocol mapper of type *Audience* to the existing `librechat` client:
 
 ### 3. Wire the network (Seam 1)
 
-Create a compose override that attaches `librechat` to `papaia-paperless-connect-net`:
+`papaia-ctl` writes this override for you (`papaia-ctl addon install paperless-connect`),
+resolving the network name from `PAPAIA_PROJECT` in the core `.env`. To wire it by hand,
+attach `librechat` to the same network the add-on creates:
 
 ```yaml
 # papaia-config/overrides/docker-compose.paperless-connect.override.yml
 services:
   librechat:
     networks:
-      - papaia-paperless-connect-net
+      - ${PAPAIA_PROJECT:-papaia}-paperless-connect-net
 networks:
-  papaia-paperless-connect-net:
+  ${PAPAIA_PROJECT:-papaia}-paperless-connect-net:
     external: true
 ```
 
@@ -227,9 +233,10 @@ docker compose -f addons/paperless-connect/docker-compose.yml down
 
 ## Security notes
 
-- **Network isolation:** `paperless-mcp` runs on `papaia-paperless-connect-net`, isolated from
-  the papaia core network. Only `librechat` is attached to this network via the generated compose
-  override.
+- **Network isolation:** `paperless-mcp` runs on the add-on's own bridge
+  (`papaia-paperless-connect-net`, or `papaia-<env>-paperless-connect-net` — one per
+  deployment on a shared host), isolated from the papaia core network. Only `librechat` is
+  attached to it via the generated compose override.
 - **OIDC at the data boundary:** `paperless-mcp` validates every incoming Bearer token against
   Keycloak before forwarding requests to Paperless. No admin credentials are stored in the MCP
   layer.

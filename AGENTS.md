@@ -52,7 +52,7 @@ Every add-on manifest carries the same shape:
 | `requires.addon_api` | The contract generation this add-on is built against; checked against the core's supported window by cores that read it |
 | `papaia_compat` | SemVer-range fallback (`>=x.y.z`) for cores that don't read `requires` yet |
 | `description` | One-line summary, shown in installer UIs |
-| `networks.app_network` | The Docker network name this add-on's own services join |
+| `networks.app_network` | The Docker network name this add-on's own services join. May be a literal, or (with `requires.addon_api: 2`) a `${PAPAIA_PROJECT:-papaia}-<name>-net` template that `papaia-ctl` resolves against the core `.env` so the bridge is scoped per deployment — use the identical string in the add-on's own compose `networks.<key>.name` |
 | `networks.attach` | Core services this add-on's containers additionally attach to. Validated against the core's own Compose services — an add-on cannot list another add-on here |
 | `local_ca_env` | Per-service list of env vars pointing at the bundled Keycloak CA cert (mounted from `$PAPAIA_CONFIG_DIR/certs`); `papaia-ctl` clears them via a generated override when `auth_provider=external_oidc`, so the add-on falls back to the system CA bundle instead of failing on a missing cert |
 | `env_prompts.<VAR>` | Per-variable metadata: `label` (prompt text), `hint` (secondary explanation), `default` / `default_from_core` (pulls a value from the core's own `.env`), `type` (`text`\|`integer`\|`url`\|`decimal`), `secret` (forces masking, or opts out of the name heuristic), `min`/`max` (numeric bounds), `pattern` (regex). All fields are optional; unset ones fall back to the raw env var name |

@@ -56,7 +56,10 @@ a mismatch is a validation error at catalog load time.
 | `qdrant-ingest` | internal (`QI_HTTP_PORT`, 8300) | Scheduler, ingestion engine, REST control plane, MCP endpoint, web interface |
 | `qdrant-ingest-tika` | internal | Apache Tika server for text extraction |
 
-Both run on the isolated `papaia-qdrant-ingest-net` Docker bridge network.
+Both run on the add-on's own isolated Docker bridge network,
+`${PAPAIA_PROJECT:-papaia}-qdrant-ingest-net` — `papaia-qdrant-ingest-net` on a default
+single-stack host, or `papaia-<env>-qdrant-ingest-net` when several papAIa deployments
+share a host. `papaia-ctl` resolves the same value when it generates the Seam-1 override.
 There is no published host port, in any configuration. The web interface
 becomes reachable from outside the network only once `nginx-proxy-manager`
 is attached and a proxy host is configured for `/ui` — see
@@ -82,9 +85,9 @@ the other add-on's network:
 services:
   qdrant-ingest:
     networks:
-      - papaia-qdrant-net
+      - ${PAPAIA_PROJECT:-papaia}-qdrant-net
 networks:
-  papaia-qdrant-net:
+  ${PAPAIA_PROJECT:-papaia}-qdrant-net:
     external: true
 ```
 
@@ -401,23 +404,25 @@ Without it every MCP call is rejected with `403 missing_operator_role`.
 
 ### 3. Wire the network (Seam 1)
 
-Create a compose override that attaches `librechat`, `litellm` and
-(optionally) `nginx-proxy-manager` to `papaia-qdrant-ingest-net`:
+`papaia-ctl` writes this override for you (`papaia-ctl addon install qdrant-ingest`),
+resolving the network name from `PAPAIA_PROJECT` in the core `.env`. To wire it by hand,
+attach `librechat`, `litellm` and (optionally) `nginx-proxy-manager` to the same network
+the add-on creates:
 
 ```yaml
 # papaia-config/overrides/docker-compose.qdrant-ingest.override.yml
 services:
   librechat:
     networks:
-      - papaia-qdrant-ingest-net
+      - ${PAPAIA_PROJECT:-papaia}-qdrant-ingest-net
   litellm:
     networks:
-      - papaia-qdrant-ingest-net
+      - ${PAPAIA_PROJECT:-papaia}-qdrant-ingest-net
   nginx-proxy-manager:
     networks:
-      - papaia-qdrant-ingest-net
+      - ${PAPAIA_PROJECT:-papaia}-qdrant-ingest-net
 networks:
-  papaia-qdrant-ingest-net:
+  ${PAPAIA_PROJECT:-papaia}-qdrant-ingest-net:
     external: true
 ```
 
@@ -506,10 +511,11 @@ vector database, not here.
 
 ## Security notes
 
-- **Network isolation:** both services run on `papaia-qdrant-ingest-net`,
-  isolated from the papaia core network. Only `librechat`, `litellm` and
-  (if the web interface is enabled) `nginx-proxy-manager` are attached,
-  via the generated compose override.
+- **Network isolation:** both services run on the add-on's own bridge
+  (`papaia-qdrant-ingest-net`, or `papaia-<env>-qdrant-ingest-net` — one per deployment
+  on a shared host), isolated from the papaia core network. Only `librechat`, `litellm`
+  and (if the web interface is enabled) `nginx-proxy-manager` are attached, via the
+  generated compose override.
 - **The ingester holds the Qdrant api-key.** It writes `_collection_meta` on
   every run, which the MCP layer refuses as a system collection, so it talks
   to Qdrant directly. Treat this container as privileged with respect to the

@@ -137,6 +137,11 @@ services:
       - --cookie-secret=${N8N_COOKIE_SECRET}
       - --cookie-secure=${N8N_COOKIE_SECURE:-false}
       - --cookie-name=_n8n_proxy
+      # One CSRF cookie per login attempt instead of a single shared one.
+      # Without it the first login fails with "invalid CSRF token" when
+      # Keycloak (HTTPS) redirects back to an HTTP public URL -- the core's
+      # oauth2-proxy sidecars set the same flag for the same symptom.
+      - --cookie-csrf-per-request=true
       # --reverse-proxy is deliberately absent. It makes the gate trust a
       # client-supplied X-Forwarded-Uri, and together with the webhook
       # --skip-auth-route rules below that lets anyone reach the editor

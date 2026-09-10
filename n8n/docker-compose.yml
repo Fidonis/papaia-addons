@@ -137,8 +137,14 @@ services:
       - --cookie-secret=${N8N_COOKIE_SECRET}
       - --cookie-secure=${N8N_COOKIE_SECURE:-false}
       - --cookie-name=_n8n_proxy
-      # Reverse-proxy mode, not forward-auth: this proxy serves n8n itself.
-      - --reverse-proxy=true
+      # --reverse-proxy is deliberately absent. It makes the gate trust a
+      # client-supplied X-Forwarded-Uri, and together with the webhook
+      # --skip-auth-route rules below that lets anyone reach the editor
+      # unauthenticated by claiming a webhook path (CVE-2026-40575). The
+      # 7.15.2 fix still trusts every source unless --trusted-proxy-ip names
+      # the edge proxy, whose address on this network is assigned at attach
+      # time -- there is nothing stable to pin. Nothing here needs the
+      # forwarded headers: --redirect-url is absolute, --cookie-secure explicit.
       - --upstream=http://n8n-proxy:5679
       - --http-address=0.0.0.0:4180
       - --redirect-url=${N8N_PUBLIC_URL}/oauth2/callback

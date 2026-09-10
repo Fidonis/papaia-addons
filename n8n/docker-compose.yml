@@ -167,7 +167,7 @@ services:
       - --http-address=0.0.0.0:4180
       - --redirect-url=${N8N_PUBLIC_URL}/oauth2/callback
       # Any authenticated realm user may enter. To restrict further, add
-      # --allowed-role via an override — see README, "Restricting access".
+      # --allowed-group via an override — see README, "Restricting access".
       - --email-domain=*
       - --scope=${OIDC_SCOPES:-openid profile email}
       - --skip-provider-button=true

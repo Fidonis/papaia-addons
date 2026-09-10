@@ -137,8 +137,14 @@ services:
   n8n-auth:
     command:
       # ... repeat the add-on's arguments, plus:
-      - --allowed-role=n8n-access
+      - --allowed-group=n8n-access
 ```
+
+`--allowed-group`, not `--allowed-role`: the gate runs oauth2-proxy's generic
+`oidc` provider, and `--allowed-role` is only enforced by the `keycloak-oidc`
+provider — with `oidc` it is accepted and silently ignored. The imported
+`n8n` client maps the user's realm roles into the `groups` claim, which is
+what `--allowed-group` checks.
 
 The role is not created by the add-on: the manifest contract imports
 Keycloak *clients*, and realm roles live outside that scope.

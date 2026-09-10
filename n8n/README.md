@@ -62,9 +62,11 @@ import. Copy it from **Keycloak Admin UI → Clients → n8n → Credentials →
 Client Secret** into `KC_N8N_CLIENT_SECRET` in
 `<papaia-config>/addons/n8n/.env`.
 
-**2. The redirect URI.** The imported client accepts `*` so the install does
-not need to know the final hostname. Once n8n is reachable, narrow it to
-`<N8N_PUBLIC_URL>/oauth2/callback` in the same Keycloak client — a wildcard
+**2. The redirect URIs.** The imported client accepts `*` for both the login
+and the post-logout redirect, so the install does not need to know the final
+hostname. Once n8n is reachable, narrow them in the same Keycloak client —
+**Valid redirect URIs** to `<N8N_PUBLIC_URL>/oauth2/callback`, **Valid post
+logout redirect URIs** to `<N8N_PUBLIC_URL>/oauth2/sign_out`. A wildcard
 redirect URI on a confidential client is a standing invitation to have
 authorization codes delivered somewhere else.
 
@@ -77,6 +79,17 @@ papaia-ctl addon start n8n
 The first browser visit goes through Keycloak and lands in the editor. n8n
 still shows its own owner-account setup screen on first run; complete it with
 any address — that account is not what protects the instance, the gate is.
+
+---
+
+## Logout
+
+Logging out of n8n ends the Keycloak session, not just n8n's own. The logout
+shim hands n8n's post-logout page load to Keycloak's end-session endpoint;
+Keycloak asks the user to confirm, then returns to the gate's
+`/oauth2/sign_out`, which clears the gate cookie — the next visit is a real
+Keycloak login. The Keycloak session is shared across the realm, so this
+signs the user out of the other papaia services as well.
 
 ---
 

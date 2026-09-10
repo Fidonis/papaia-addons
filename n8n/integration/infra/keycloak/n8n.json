@@ -14,6 +14,9 @@
   "publicClient": false,
   "protocol": "openid-connect",
   "fullScopeAllowed": true,
+  "attributes": {
+    "post.logout.redirect.uris": "*"
+  },
   "protocolMappers": [
     {
       "name": "groups",

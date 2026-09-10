@@ -1,0 +1,31 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# papaia-addon-qdrant-ingest — example connection list
+# by Fidonis GmbH · https://fidonis.de
+#
+# Copy this file to
+# <papaia-config>/addons/qdrant-ingest/catalog/connections.yaml, mounted
+# read-write as /config/catalog/connections.yaml. Usually you manage it from
+# the web interface instead; this file is the starting point.
+#
+# Each entry is one Qdrant instance a job may write to, named uniquely. Jobs
+# reference it by name through target.connection.
+#
+# api_key is never stored here in the clear: the web interface writes an
+# encrypted "enc:1:..." token, derived from QI_CONNECTIONS_SECRET. A literal
+# value in the field is a hard validation error. Omit it entirely for an
+# unauthenticated Qdrant.
+#
+# Changes are picked up on start, on POST /v1/config/reload, and by the same
+# mtime poll that watches jobs.yaml.
+# ═══════════════════════════════════════════════════════════════════════════
+version: 1
+
+connections:
+
+  # The bundled `qdrant` add-on, reached over the host — Qdrant is not an
+  # attachable core service. With the add-on on this host that api-key is
+  # QDRANT_JWT_SECRET from <papaia-config>/addons/qdrant/.env; set it through
+  # the web interface so it is stored encrypted.
+  - name: primary
+    url: http://host.docker.internal:6333
+    # api_key: set from the web interface (stored as enc:1:...)

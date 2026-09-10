@@ -69,6 +69,29 @@ endpoint and a populated `_collection_meta` collection — see
 
 ---
 
+## TLS trust for the MCP server
+
+`qdrant-mcp` runs on an isolated network with no route to the papaia core's
+internal `keycloak:8443`, so it always reaches Keycloak over the public
+`OIDC_ISSUER` URL for OIDC discovery and JWKS. Its HTTP client **replaces** its
+trust store with `QDRANT_MCP_SSL_CERT_FILE` when that variable is set — it does
+not add to the system trust store. The same file governs the connections to
+`QDRANT_MCP_QDRANT_URL` and the embeddings endpoint.
+
+| `QDRANT_MCP_SSL_CERT_FILE` | When |
+|---|---|
+| *empty* (default) | The Keycloak issuer URL and `QDRANT_MCP_QDRANT_URL` use publicly-trusted (e.g. Let's Encrypt) certificates. The normal case for a connect add-on, including a bundled papaia Keycloak published through a reverse proxy. |
+| `/certs/local-ca.crt` | Local-dev core only: Keycloak is served at `host.docker.internal` with the bundled self-signed CA. |
+
+With `AUTH_PROVIDER=external_oidc`, `papaia-ctl` additionally forces this
+variable empty via a generated override.
+
+> If the MCP server logs `Unexpected error during OIDC validation` with an
+> `ssl.SSLCertVerificationError` and clients see `auth_internal_error`, this
+> variable is pointed at a CA that does not sign the Keycloak certificate.
+
+---
+
 ## Installation via papaia-ctl
 
 ```bash
@@ -109,6 +132,7 @@ Edit `.env` and fill in all `CHANGE_ME` values:
 | `QDRANT_MCP_QDRANT_URL` | URL of the existing Qdrant instance as reachable from the MCP container — `http://host.docker.internal:6333` when it runs on the same host |
 | `QDRANT_MCP_QDRANT_JWT_SECRET` | The existing instance's `service.api_key` |
 | `QDRANT_MCP_EMBEDDING_API_KEY` | `LITELLM_MASTER_KEY` from `<papaia-config>/ai/litellm/.env` |
+| `QDRANT_MCP_SSL_CERT_FILE` | Leave empty unless the Keycloak / Qdrant certificates are signed by a private CA — see [TLS trust for the MCP server](#tls-trust-for-the-mcp-server) |
 
 `mcp-qdrant` needs no client secret: it is a Bearer-token resource server that verifies incoming
 tokens against Keycloak's public JWKS endpoint and never authenticates itself to Keycloak.

@@ -1,5 +1,5 @@
 name: qdrant-ingest
-version: 1.0.0
+version: 1.1.0
 addon_repo: papaia-addon-qdrant-ingest
 requires:
   # Contract generation this addon is built against; checked against the
@@ -16,10 +16,10 @@ networks:
   # interface (/ui) -- drop it if the interface is reached some other way, or
   # not used at all.
   # Qdrant is deliberately absent: `attach` is validated against core compose
-  # services, so one addon cannot attach to another. The vector database is
-  # reached over QI_QDRANT_URL plus extra_hosts instead, which is what lets
-  # this addon serve the qdrant addon, qdrant-connect, and a remote instance
-  # through one code path.
+  # services, so one addon cannot attach to another. Each vector database is
+  # reached over the URL of its named connection plus extra_hosts instead,
+  # which is what lets this addon serve the qdrant addon, qdrant-connect, and
+  # remote instances through one code path.
   attach: [librechat, litellm, nginx-proxy-manager]
 
 # Env vars pointing at the bundled-Keycloak CA cert (mounted from
@@ -51,15 +51,10 @@ env_prompts:
     default_from_core: OIDC_ISSUER
     type: url
 
-  # ── Qdrant connection ─────────────────────────────────────────────────────
-  QI_QDRANT_URL:
-    label: "Qdrant URL"
-    hint: "http://host.docker.internal:6333 when the qdrant add-on runs on this host"
-    type: url
-
-  QI_QDRANT_API_KEY:
-    label: "Qdrant api-key"
-    hint: "QDRANT_JWT_SECRET from <papaia-config>/addons/qdrant/.env"
+  # ── Connections ───────────────────────────────────────────────────────────
+  QI_CONNECTIONS_SECRET:
+    label: "Connection-key encryption secret"
+    hint: "Encrypts the Qdrant api-keys in connections.yaml; generated on install, rotating it invalidates them"
     secret: true
 
   # ── Embeddings ────────────────────────────────────────────────────────────
@@ -72,11 +67,6 @@ env_prompts:
     label: "Embeddings API key"
     hint: "LITELLM_MASTER_KEY from <papaia-config>/ai/litellm/.env"
     secret: true
-
-  QI_EMBEDDING_MODEL:
-    label: "Default embedding model"
-    hint: "Must be served by the endpoint above; one model per Qdrant collection"
-    type: text
 
   # ── Control plane — REST ──────────────────────────────────────────────────
   QI_API_TOKEN:

@@ -1,5 +1,5 @@
 name: paperless-connect
-version: 1.0.0
+version: 1.1.0
 addon_repo: papaia-addon-paperless-connect
 requires:
   # Contract generation this addon is built against; checked against the
@@ -13,10 +13,11 @@ networks:
   app_network: papaia-paperless-connect-net
   attach: [librechat]
 
-# Env vars pointing at the bundled-Keycloak CA cert (mounted from
-# $PAPAIA_CONFIG_DIR/certs). papaia-ctl clears them via a generated override
-# when auth_provider=external_oidc, so requests/httpx fall back to the
-# system CA bundle instead of failing on the absent local-ca.crt.
+# SSL_CERT_FILE defaults to empty (system trust store) in docker-compose.yml;
+# it is opt-in via PAPERLESS_MCP_SSL_CERT_FILE for a local-dev core whose
+# Keycloak uses the bundled self-signed CA. This entry additionally makes
+# papaia-ctl force it empty via a generated override when
+# auth_provider=external_oidc, where $PAPAIA_CONFIG_DIR/certs is absent.
 local_ca_env:
   paperless-mcp: [SSL_CERT_FILE]
 
@@ -52,6 +53,11 @@ env_prompts:
     label: "JWKS cache TTL (seconds)"
     type: integer
     min: 0
+
+  PAPERLESS_MCP_SSL_CERT_FILE:
+    label: "Extra CA file for the MCP server's outbound TLS"
+    hint: "Leave empty for publicly-trusted Keycloak/Paperless certificates (the common case, a published bundled Keycloak included); set to /certs/local-ca.crt only for a local-dev core using the bundled self-signed Keycloak CA"
+    type: text
 
   PAPERLESS_MCP_PAPERLESS_URL:
     label: "Paperless URL"

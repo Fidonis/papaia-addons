@@ -1,5 +1,5 @@
 name: paperless
-version: 1.0.0
+version: 1.1.0
 addon_repo: papaia-addon-paperless
 requires:
   # Contract generation this addon is built against; checked against the

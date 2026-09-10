@@ -176,6 +176,20 @@ worth a second look:
 | `N8N_ENCRYPTION_KEY` | See above. |
 | `N8N_DIAGNOSTICS_ENABLED` | n8n's telemetry ping, off by default. |
 
+The engine does not load the add-on's `.env` wholesale; it receives only the
+variables its `environment:` block lists. That keeps the gate's client and
+cookie secrets out of the container workflows run in — which matters as soon
+as `N8N_BLOCK_ENV_ACCESS_IN_NODE=false` lets workflows read the environment.
+Pass further n8n settings through an override, not through `.env`:
+
+```yaml
+# <papaia-config>/overrides/addons/docker-compose.n8n-env.override.yml
+services:
+  n8n:
+    environment:
+      EXECUTIONS_DATA_MAX_AGE: "168"
+```
+
 ---
 
 ## Talking to the rest of the stack

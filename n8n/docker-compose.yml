@@ -11,8 +11,11 @@
 # (Seam 1). External access via the Nginx Proxy Manager (Seam 5 — see
 # integration/infra/nginx/n8n.conf and README.md).
 #
-# env_file reads from .env in the same directory as this file, materialized
-# from the config bundle by `papaia-ctl addon start n8n`.
+# The ${...} values below are interpolated from the add-on .env, materialized
+# next to this file from the config bundle by `papaia-ctl addon start n8n`.
+# No service loads that file wholesale: each container receives only the
+# variables in its own block, so the gate's client and cookie secrets stay
+# out of the engine, whose workflows can be allowed to read their environment.
 # ═══════════════════════════════════════════════════════════════════════════
 services:
 
@@ -26,8 +29,8 @@ services:
   n8n:
     image: ${N8N_IMAGE:-docker.io/n8nio/n8n:2.36.6}
     restart: unless-stopped
-    env_file:
-      - ./.env
+    # No env_file (see the header): further n8n settings belong in an
+    # override's environment block, not in the bundle .env.
     environment:
       DB_TYPE:                postgresdb
       DB_POSTGRESDB_HOST:     n8n-db

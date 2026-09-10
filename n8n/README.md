@@ -54,13 +54,16 @@ papaia-ctl addon install n8n
 ```
 
 The installer prompts for the values in `.env.example`, pulling the OIDC
-endpoints from the core configuration. Two steps need attention afterwards:
+endpoints from the core configuration. Three steps need attention afterwards
+— on installs through papaia-manager as well:
 
-**1. The Keycloak client secret.** The `n8n` client is imported from
-`integration/infra/keycloak/n8n.json`, and Keycloak generates its secret on
-import. Copy it from **Keycloak Admin UI → Clients → n8n → Credentials →
-Client Secret** into `KC_N8N_CLIENT_SECRET` in
-`<papaia-config>/addons/n8n/.env`.
+**1. The Keycloak client.** The installer does not create Keycloak clients, so
+import `integration/infra/keycloak/n8n.json` by hand: **Keycloak Admin UI →
+Clients → Import client**. Then open **Credentials** and **Regenerate** the
+client secret: a UI import does not resolve the file's
+`${env.KC_N8N_CLIENT_SECRET}` placeholder, so that literal string would
+otherwise become the secret. Copy the new value into `KC_N8N_CLIENT_SECRET`
+in `<papaia-config>/addons/n8n/.env`.
 
 **2. The redirect URIs.** The imported client accepts `*` for both the login
 and the post-logout redirect, so the install does not need to know the final
@@ -70,10 +73,18 @@ logout redirect URIs** to `<N8N_PUBLIC_URL>/oauth2/sign_out`. A wildcard
 redirect URI on a confidential client is a standing invitation to have
 authorization codes delivered somewhere else.
 
+**3. One core start after the first add-on start.** The gate redeems the login
+code against Keycloak's internal name, so the manifest attaches `keycloak` and
+`nginx-proxy-manager` to `papaia-n8n-net`. papaia-ctl writes that attachment
+as a core override, and only a core start applies it — `addon start` brings up
+the add-on's own containers only. Skipped, every login ends in a 500 at
+`/oauth2/callback` with `lookup keycloak … no such host`.
+
 Then:
 
 ```bash
 papaia-ctl addon start n8n
+papaia-ctl start    # applies the attachment; recreates keycloak and nginx-proxy-manager
 ```
 
 The first browser visit goes through Keycloak and lands in the editor. n8n

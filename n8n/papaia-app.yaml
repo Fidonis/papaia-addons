@@ -83,7 +83,7 @@ env_prompts:
   # ── n8n — Public URL ──────────────────────────────────────────────────────
   N8N_PUBLIC_URL:
     label: "n8n public URL"
-    hint: "Browser-facing URL of the editor (scheme + host + optional port); every webhook URL is derived from it"
+    hint: "Browser-facing URL of the editor (scheme + host + optional port, no trailing slash); every webhook URL is derived from it"
     default: "http://host.docker.internal:8400"
     type: url
 

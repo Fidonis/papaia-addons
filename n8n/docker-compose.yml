@@ -44,10 +44,12 @@ services:
       # Setting it explicitly keeps volume and key independent.
       N8N_ENCRYPTION_KEY:     ${N8N_ENCRYPTION_KEY}
       # Public URL — n8n builds webhook and OAuth callback URLs from these.
+      # No slash appended to WEBHOOK_URL: n8n adds one itself, and appending
+      # it here doubled it whenever N8N_PUBLIC_URL already ended in one.
       N8N_HOST:               ${N8N_HOSTNAME}
       N8N_PROTOCOL:           ${N8N_PROTOCOL:-http}
       N8N_PORT:               5678
-      WEBHOOK_URL:            ${N8N_PUBLIC_URL}/
+      WEBHOOK_URL:            ${N8N_PUBLIC_URL}
       N8N_EDITOR_BASE_URL:    ${N8N_PUBLIC_URL}
       # Number of proxy hops in X-Forwarded-For (n8n-auth → n8n-proxy, plus
       # any edge proxy in front). n8n derives the client IP from this.

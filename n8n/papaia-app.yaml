@@ -95,7 +95,7 @@ env_prompts:
 
   N8N_PROTOCOL:
     label: "n8n protocol"
-    hint: "Scheme of the public URL: https or http"
+    hint: "Scheme of the public URL (http or https); only n8n's fallback base URL uses it, webhook and editor URLs come from the public URL"
     default: "http"
     type: text
 

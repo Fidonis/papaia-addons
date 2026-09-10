@@ -45,7 +45,7 @@ services:
       N8N_ENCRYPTION_KEY:     ${N8N_ENCRYPTION_KEY}
       # Public URL — n8n builds webhook and OAuth callback URLs from these.
       N8N_HOST:               ${N8N_HOSTNAME}
-      N8N_PROTOCOL:           ${N8N_PROTOCOL:-https}
+      N8N_PROTOCOL:           ${N8N_PROTOCOL:-http}
       N8N_PORT:               5678
       WEBHOOK_URL:            ${N8N_PUBLIC_URL}/
       N8N_EDITOR_BASE_URL:    ${N8N_PUBLIC_URL}

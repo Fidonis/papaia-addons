@@ -9,6 +9,7 @@ deployment.
 
 | Add-on | Description |
 |---|---|
+| [`n8n`](n8n/) | n8n workflow automation behind a Keycloak SSO gate |
 | [`paperless`](paperless/) | Paperless-ngx document management + OIDC/RBAC MCP server |
 | [`paperless-connect`](paperless-connect/) | OIDC/RBAC MCP server for an existing standalone Paperless-ngx instance |
 | [`qdrant`](qdrant/) | Qdrant vector database + OIDC/RBAC MCP server |

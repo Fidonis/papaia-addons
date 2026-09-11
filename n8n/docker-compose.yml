@@ -1,0 +1,240 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# papaia-addon-n8n — Docker Compose
+# by Fidonis GmbH · https://fidonis.de
+#
+# n8n workflow automation behind a Keycloak SSO gate. n8n Community Edition
+# has no native OIDC, so an oauth2-proxy sidecar is the only publicly exposed
+# endpoint and no request reaches the engine unauthenticated.
+#
+# All services run on the isolated papaia-n8n-net bridge network.
+# papaia-ctl generates a compose override that attaches nginx to this network
+# (Seam 1). External access via the Nginx Proxy Manager (Seam 5 — see
+# integration/infra/nginx/n8n.conf and README.md).
+#
+# The ${...} values below are interpolated from the add-on .env, materialized
+# next to this file from the config bundle by `papaia-ctl addon start n8n`.
+# No service loads that file wholesale: each container receives only the
+# variables in its own block, so the gate's client and cookie secrets stay
+# out of the engine, whose workflows can be allowed to read their environment.
+# ═══════════════════════════════════════════════════════════════════════════
+services:
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  #  N8N — Workflow engine
+  #
+  #  Not published on any host port: every request arrives through n8n-auth.
+  #  Binding the engine directly would expose an unauthenticated instance,
+  #  since the Community Edition has no login of its own worth the name.
+  # ═══════════════════════════════════════════════════════════════════════════
+  n8n:
+    image: ${N8N_IMAGE:-docker.io/n8nio/n8n:2.36.6}
+    restart: unless-stopped
+    # No env_file (see the header): further n8n settings belong in an
+    # override's environment block, not in the bundle .env.
+    environment:
+      DB_TYPE:                postgresdb
+      DB_POSTGRESDB_HOST:     n8n-db
+      DB_POSTGRESDB_PORT:     5432
+      DB_POSTGRESDB_DATABASE: ${N8N_DB:-n8n}
+      DB_POSTGRESDB_USER:     ${N8N_DBUSER:-n8n}
+      DB_POSTGRESDB_PASSWORD: ${N8N_DBPASS}
+      # Credential encryption key. n8n generates one into its data volume on
+      # first start when unset — which makes a restored backup useless, as the
+      # restored credentials cannot be decrypted with a freshly generated key.
+      # Setting it explicitly keeps volume and key independent.
+      N8N_ENCRYPTION_KEY:     ${N8N_ENCRYPTION_KEY}
+      # Public URL — n8n builds webhook and OAuth callback URLs from these.
+      # No slash appended to WEBHOOK_URL: n8n adds one itself, and appending
+      # it here doubled it whenever N8N_PUBLIC_URL already ended in one.
+      N8N_HOST:               ${N8N_HOSTNAME}
+      N8N_PROTOCOL:           ${N8N_PROTOCOL:-http}
+      N8N_PORT:               5678
+      WEBHOOK_URL:            ${N8N_PUBLIC_URL}
+      N8N_EDITOR_BASE_URL:    ${N8N_PUBLIC_URL}
+      # Number of proxy hops in X-Forwarded-For (n8n-auth → n8n-proxy, plus
+      # any edge proxy in front). n8n derives the client IP from this.
+      N8N_PROXY_HOPS:         ${N8N_PROXY_HOPS:-2}
+      # The oauth2-proxy session is the security boundary; n8n's own cookie
+      # rides inside it. Secure would require TLS on the internal hop.
+      N8N_SECURE_COOKIE:      "false"
+      N8N_RUNNERS_MODE:       internal
+      GENERIC_TIMEZONE:       ${TIMEZONE:-Europe/Berlin}
+      TZ:                     ${TIMEZONE:-Europe/Berlin}
+      N8N_DIAGNOSTICS_ENABLED: ${N8N_DIAGNOSTICS_ENABLED:-false}
+      N8N_LOG_LEVEL:          ${N8N_LOG_LEVEL:-info}
+    depends_on:
+      n8n-db:
+        condition: service_healthy
+    volumes:
+      - n8n-data:/home/node/.n8n
+    networks:
+      - papaia-n8n-net
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "wget -qO- --tries=1 --timeout=3 http://127.0.0.1:5678/healthz 2>/dev/null | grep -q ok"
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    labels:
+      de.fidonis.module: papaia-n8n
+      de.fidonis.role: workflow-engine
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  #  N8N-PROXY — logout shim
+  #
+  #  n8n loads /signin after logout. Clearing only the gate's cookie is not
+  #  enough: the Keycloak session survives and the next visit re-enters the
+  #  editor silently. The shim sends that request to Keycloak's end-session
+  #  endpoint instead, which returns to the gate's sign_out to clear its
+  #  cookie too — so the next visit is a real Keycloak login.
+  # ═══════════════════════════════════════════════════════════════════════════
+  n8n-proxy:
+    image: ${N8N_PROXY_IMAGE:-docker.io/library/nginx:1.31-alpine}
+    restart: unless-stopped
+    environment:
+      # The config is an envsubst template (see nginx.conf). The filter keeps
+      # substitution to N8N_LOGOUT_*, so nginx's own $variables -- and a
+      # custom config supplied via N8N_PROXY_CONF -- pass through untouched.
+      NGINX_ENVSUBST_FILTER: "^N8N_LOGOUT_"
+      # RP-initiated logout, same shape as the paperless add-on's. Keycloak
+      # goes first and returns to the gate's sign_out; the reverse order
+      # would need --whitelist-domain for Keycloak on the gate.
+      N8N_LOGOUT_URL: "${OIDC_ISSUER}/protocol/openid-connect/logout?client_id=${N8N_OIDC_CLIENT_ID:-n8n}&post_logout_redirect_uri=${N8N_PUBLIC_URL}/oauth2/sign_out"
+    volumes:
+      - type: bind
+        source: ${N8N_PROXY_CONF:-./nginx.conf}
+        target: /etc/nginx/templates/default.conf.template
+        read_only: true
+    depends_on:
+      n8n:
+        condition: service_healthy
+    networks:
+      - papaia-n8n-net
+    healthcheck:
+      # 127.0.0.1, not localhost: the shim listens on IPv4 only, while
+      # localhost resolves to ::1 first inside the container -- which makes
+      # the probe fail with "connection refused" against a healthy server.
+      test:
+        - CMD-SHELL
+        - "wget -qO- --tries=1 --timeout=3 http://127.0.0.1:5679/healthz 2>/dev/null | grep -q ok"
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    labels:
+      de.fidonis.module: papaia-n8n
+      de.fidonis.role: logout-shim
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  #  N8N-AUTH — oauth2-proxy (Keycloak SSO gate)
+  #
+  #  The only published endpoint of this add-on. Discovery is skipped so the
+  #  browser-facing login URL and the server-side token/JWKS endpoints can
+  #  differ, exactly as the core oauth2-proxy does it.
+  # ═══════════════════════════════════════════════════════════════════════════
+  n8n-auth:
+    image: ${N8N_OAUTH2_PROXY_IMAGE:-quay.io/oauth2-proxy/oauth2-proxy:v7.15.3}
+    restart: unless-stopped
+    command:
+      - --provider=oidc
+      # Used only for iss-claim validation — must match the core OIDC_ISSUER.
+      - --oidc-issuer-url=${OIDC_ISSUER}
+      - --skip-oidc-discovery=true
+      # Browser redirect to Keycloak login (external URL, reachable by the browser)
+      - --login-url=${OIDC_AUTH_URL}
+      # Server-side token exchange and JWKS fetch (internal Docker DNS)
+      - --redeem-url=${OIDC_TOKEN_URL}
+      - --oidc-jwks-url=${OIDC_JWKS_URL}
+      - --client-id=${N8N_OIDC_CLIENT_ID:-n8n}
+      - --client-secret=${KC_N8N_CLIENT_SECRET}
+      - --cookie-secret=${N8N_COOKIE_SECRET}
+      - --cookie-secure=${N8N_COOKIE_SECURE:-false}
+      - --cookie-name=_n8n_proxy
+      # One CSRF cookie per login attempt instead of a single shared one.
+      # Without it the first login fails with "invalid CSRF token" when
+      # Keycloak (HTTPS) redirects back to an HTTP public URL -- the core's
+      # oauth2-proxy sidecars set the same flag for the same symptom.
+      - --cookie-csrf-per-request=true
+      # --reverse-proxy is deliberately absent. It makes the gate trust a
+      # client-supplied X-Forwarded-Uri, and together with the webhook
+      # --skip-auth-route rules below that lets anyone reach the editor
+      # unauthenticated by claiming a webhook path (CVE-2026-40575). The
+      # 7.15.2 fix still trusts every source unless --trusted-proxy-ip names
+      # the edge proxy, whose address on this network is assigned at attach
+      # time -- there is nothing stable to pin. Nothing here needs the
+      # forwarded headers: --redirect-url is absolute, --cookie-secure explicit.
+      - --upstream=http://n8n-proxy:5679
+      - --http-address=0.0.0.0:4180
+      - --redirect-url=${N8N_PUBLIC_URL}/oauth2/callback
+      # Any authenticated realm user may enter. To restrict further, add
+      # --allowed-group via an override — see README, "Restricting access".
+      - --email-domain=*
+      - --scope=${OIDC_SCOPES:-openid profile email}
+      - --skip-provider-button=true
+      - --insecure-oidc-allow-unverified-email=true
+      - --pass-user-headers=true
+      - --set-xauthrequest=true
+      - --provider-display-name=Keycloak (papAIa)
+      # Webhook callers are machines: they present no cookie and cannot follow
+      # a login redirect, so these three prefixes bypass the gate. A workflow's
+      # webhook path is its only secret — treat every enabled production
+      # webhook as internet-reachable. Deliberately not env-driven: an empty
+      # value would compile to a regex matching every path.
+      - --skip-auth-route=^/webhook/
+      - --skip-auth-route=^/webhook-test/
+      - --skip-auth-route=^/webhook-waiting/
+    environment:
+      # CA cert for the OIDC calls — trusts the bundled Keycloak self-signed
+      # cert. Cleared to "" via overrides/addons/ when auth_provider=external_oidc.
+      SSL_CERT_FILE: /certs/local-ca.crt
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "${HOST_IP:-0.0.0.0}:${N8N_EXT_PORT:-8400}:4180"
+    depends_on:
+      n8n-proxy:
+        condition: service_healthy
+    volumes:
+      - ${PAPAIA_CONFIG_DIR}/certs:/certs:ro
+    # No healthcheck: the distroless image has no shell, curl or wget.
+    networks:
+      - papaia-n8n-net
+    labels:
+      de.fidonis.module: papaia-n8n
+      de.fidonis.role: sso-proxy
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  #  DATABASE — PostgreSQL
+  # ═══════════════════════════════════════════════════════════════════════════
+  n8n-db:
+    image: ${N8N_DB_IMAGE:-docker.io/library/postgres:18}
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       ${N8N_DB:-n8n}
+      POSTGRES_USER:     ${N8N_DBUSER:-n8n}
+      POSTGRES_PASSWORD: ${N8N_DBPASS}
+    volumes:
+      - n8n-pgdata:/var/lib/postgresql
+    networks:
+      - papaia-n8n-net
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "pg_isready -d ${N8N_DB:-n8n} -U ${N8N_DBUSER:-n8n}"
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    labels:
+      de.fidonis.module: papaia-n8n
+      de.fidonis.role: database
+
+networks:
+  papaia-n8n-net:
+    driver: bridge
+    name: papaia-n8n-net
+
+volumes:
+  n8n-data:
+  n8n-pgdata:

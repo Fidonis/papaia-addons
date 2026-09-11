@@ -4,13 +4,18 @@ addon_repo: papaia-addon-qdrant-connect
 requires:
   # Contract generation this addon is built against; checked against the
   # core's ADDON_API window by cores that support compatibility gating.
-  addon_api: 1
+  # 2: networks.app_network carries a ${PAPAIA_PROJECT:-papaia} template
+  # that the core resolves against its .env (needs a core serving addon_api 2).
+  addon_api: 2
 # Fallback axis for cores that do not read `requires` yet.
 papaia_compat: ">=0.8.0"
 description: "OIDC/RBAC MCP server for an existing standalone Qdrant instance"
 
 networks:
-  app_network: papaia-qdrant-connect-net
+  # Resolved by papaia-ctl against the core .env, matching the add-on's own
+  # compose network name. Scopes the Seam-1 bridge per deployment; a default
+  # single-stack host resolves it to papaia-qdrant-connect-net.
+  app_network: "${PAPAIA_PROJECT:-papaia}-qdrant-connect-net"
   # litellm is attached because the MCP server embeds natural-language queries
   # through it (search_collection_by_text); librechat is the MCP client.
   attach: [librechat, litellm]

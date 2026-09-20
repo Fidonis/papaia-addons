@@ -35,11 +35,12 @@ from the web interface, where the api-key is stored encrypted (keyed by
 
 **2. An embedding model that the endpoint actually serves.** The model is a
 `jobs.yaml` concern — `defaults.embedding.model` or a per-job override, with no
-environment fallback. The usual default `nomic-embed-text` is defined in the
-core's LiteLLM configuration, but the matching model download in
-`src/ai/localai/models.txt` is commented out by default. Enable it — or set a
-model that is served — before running a job; otherwise the dimension probe
-fails with a 404 from LiteLLM that does not name the cause.
+environment fallback. The core's LiteLLM configuration ships no models, so
+add an embedding model in the LiteLLM Admin UI first — `nomic-embed-text` is
+the name used in the examples. A model served by LocalAI also needs its
+download enabled in `src/ai/localai/models.txt`, where it is commented out by
+default. Set a model that is actually served before running a job; otherwise
+the dimension probe fails with a 404 from LiteLLM that does not name the cause.
 
 A Qdrant collection holds vectors of exactly one model: the `_collection_meta`
 record the ingester writes carries one `embedding_model` per collection, and

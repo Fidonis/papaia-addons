@@ -54,16 +54,19 @@ a mismatch is a validation error at catalog load time.
 
 | Service | Port | Description |
 |---|---|---|
-| `qdrant-ingest` | internal (`QI_HTTP_PORT`, 8300) | Scheduler, ingestion engine, REST control plane, MCP endpoint, web interface |
+| `qdrant-ingest` | `${HOST_IP}:${QI_EXT_PORT:-8300}` → `QI_HTTP_PORT` (8300) | Scheduler, ingestion engine, REST control plane, MCP endpoint, web interface |
 | `qdrant-ingest-tika` | internal | Apache Tika server for text extraction |
 
 Both run on the add-on's own isolated Docker bridge network,
 `${PAPAIA_PROJECT:-papaia}-qdrant-ingest-net` — `papaia-qdrant-ingest-net` on a default
 single-stack host, or `papaia-<env>-qdrant-ingest-net` when several papAIa deployments
 share a host. `papaia-ctl` resolves the same value when it generates the Seam-1 override.
-There is no published host port, in any configuration. The web interface
-becomes reachable from outside the network only once `nginx-proxy-manager`
-is attached and a proxy host is configured for `/ui` — see
+The ingester publishes one host port, `QI_EXT_PORT` (default 8300), bound to
+`HOST_IP` from the core `.env` — loopback when `HOST_IP` is not set. REST, MCP
+and the web interface all share it, so restrict who can reach it (a trusted
+`HOST_IP` or a firewall); see the [Security notes](#security-notes). The
+Tika sidecar publishes nothing. For TLS and a public hostname, put an
+`nginx-proxy-manager` proxy host in front of `/ui` — see
 [Web interface](#web-interface) below.
 
 ---
@@ -133,9 +136,10 @@ role has to be created. The session cookie is scoped to `QI_UI_PATH`, so it
 grants nothing on `/v1` or `/mcp` — logging into the interface is not a way
 into the token-authenticated surfaces. See [Web interface](#web-interface).
 
-Only the web interface is meant to be published through the proxy. REST and
+Only the web interface is meant to be published through a proxy host. REST and
 MCP are mutation and token surfaces respectively; putting either on a public
-hostname would be a mistake.
+hostname would be a mistake. The published host port serves all three, which
+is why it follows `HOST_IP` and falls back to loopback.
 
 ---
 
@@ -214,7 +218,10 @@ with `papaia-manager`, is in the
 ### Enabling it
 
 1. Fill in `QI_UI_PUBLIC_URL` in the bundle `.env` — the browser-facing
-   URL of this addon, e.g. `https://ingest.example.com`.
+   URL of this addon. Reaching the published port directly, that is the
+   host name or IP the browser uses plus `QI_EXT_PORT`, e.g.
+   `http://localhost:8300`; behind a proxy host, e.g.
+   `https://ingest.example.com`.
 2. Import `integration/infra/keycloak/qdrant-ingest-ui.json` (see the
    Keycloak checklist below) and copy the client secret it generated
    into `QI_UI_CLIENT_SECRET`.
@@ -222,12 +229,20 @@ with `papaia-manager`, is in the
 4. Sign in at `<QI_UI_PUBLIC_URL>/ui` with an account holding the
    `qdrant-ingest-operator` realm role.
 
-### Publishing it (optional)
+### Reaching it
 
 The interface is reachable inside the addon network at
-`http://qdrant-ingest:8300/ui` regardless. To reach it from a browser
-outside the host, attach `nginx-proxy-manager` (already in this addon's
-`networks.attach`) and add a proxy host — see
+`http://qdrant-ingest:8300/ui`, and from the host at
+`http://<HOST_IP>:<QI_EXT_PORT>/ui` — by default `http://localhost:8300/ui`.
+Change `QI_EXT_PORT` in the bundle `.env` if 8300 is taken; `QI_UI_PUBLIC_URL`
+and the redirect URI in Keycloak must then carry the new port. Because the
+same port also serves `/v1` and `/mcp`, set `HOST_IP` to a trusted interface
+or restrict the port with a firewall.
+
+### Publishing it behind a proxy host (optional)
+
+For TLS and a public hostname, attach `nginx-proxy-manager` (already in this
+addon's `networks.attach`) and add a proxy host — see
 `integration/infra/nginx/qdrant-ingest.conf` for the exact fragment.
 **Only `/ui` is meant to be published.** `/v1` is a mutation API behind
 a static bearer token and `/mcp` is a Keycloak-token resource server;
@@ -342,7 +357,8 @@ with a strong random value (`openssl rand -hex 24`):
 | `QI_CONNECTIONS_SECRET` | Encrypts the Qdrant api-keys in `connections.yaml`; any strong random value |
 | `QI_EMBEDDING_API_KEY` | `LITELLM_MASTER_KEY` from `<papaia-config>/ai/litellm/.env` |
 | `QI_API_TOKEN` | Bearer token for the REST control plane |
-| `QI_UI_PUBLIC_URL` | Browser-facing URL of the web interface, e.g. `https://ingest.example.com`; leave blank (not `CHANGE_ME`) to keep the interface off |
+| `QI_UI_PUBLIC_URL` | Browser-facing URL of the web interface, e.g. `http://localhost:8300` (the published port) or `https://ingest.example.com` (behind a proxy host); leave blank (not `CHANGE_ME`) to keep the interface off |
+| `QI_EXT_PORT` | Optional. Host port the ingester is published on (default `8300`), bound to `HOST_IP` from the core `.env` |
 | `QI_UI_CLIENT_SECRET` | Keycloak client secret for the `qdrant-ingest-ui` OIDC client (see step 2) |
 | `QI_UI_SESSION_SECRET` | Session-cookie signing key (generate like `QI_API_TOKEN`) |
 
@@ -473,9 +489,11 @@ mcpSettings:
     # ... keep any existing entries
 ```
 
-### 5. Publish the web interface (optional)
+### 5. Reach or publish the web interface (optional)
 
-Add a proxy host in Nginx Proxy Manager for `/ui` only — see
+The published host port (`QI_EXT_PORT`, default 8300) already serves `/ui` —
+see [Reaching it](#reaching-it). For TLS and a public hostname, add a proxy
+host in Nginx Proxy Manager for `/ui` only — see
 [Web interface](#web-interface) above and
 `integration/infra/nginx/qdrant-ingest.conf` for the exact fragment.
 Skip this step entirely if you are not enabling the interface.
@@ -527,6 +545,12 @@ vector database, not here.
   an account with the same operator role. The nginx fragment publishes
   **only** `/ui` — REST and MCP stay off the public hostname; a session
   cookie carries no access to either.
+- **The published port serves all three surfaces.** `QI_EXT_PORT` is bound to
+  `HOST_IP` from the core `.env` and falls back to `127.0.0.1` when `HOST_IP`
+  is unset. On a host where `HOST_IP` is `0.0.0.0`, REST and MCP are reachable
+  on every interface and are protected only by their token and OIDC checks:
+  set `HOST_IP` to a trusted interface or restrict the port with a firewall,
+  and do not forward it to the internet.
 - **The catalog subdirectory is the one writable path in the bundle
   mount.** `/config/catalog` is read-write so the web interface can save
   `jobs.yaml` and `connections.yaml`; everything else under `/config`,
@@ -535,9 +559,6 @@ vector database, not here.
 - **The container runs as the host uid** (`UID`/`GID` from the core
   `.env`, default 1000), not a fixed system uid, because it now writes
   to that bind mount.
-- **The published port is opt-in.** `QI_EXT_PORT` and the `ports:` block are
-  commented out by default. If you publish them, keep the binding on a trusted
-  interface via `HOST_IP`.
 - **Source credentials stay out of git.** They live only in the bundle `.env`;
   `jobs.yaml` may reference them but never contain them, and that is enforced,
   not merely documented.

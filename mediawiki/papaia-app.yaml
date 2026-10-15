@@ -1,0 +1,266 @@
+name: mediawiki
+version: 1.0.0
+addon_repo: papaia-addon-mediawiki
+requires:
+  # Contract generation this addon is built against; checked against the
+  # core's ADDON_API window by cores that support compatibility gating.
+  # 2: networks.app_network carries a ${PAPAIA_PROJECT:-papaia} template
+  # that the core resolves against its .env (needs a core serving addon_api 2).
+  addon_api: 2
+# Fallback axis for cores that do not read `requires` yet. 1.3.0 is the first
+# core serving addon_api 2 (deployment-scoped add-on networks).
+papaia_compat: ">=1.3.0"
+description: "MediaWiki knowledge base with access tiers + OIDC/RBAC MCP server"
+
+networks:
+  # Resolved by papaia-ctl against the core .env, matching the add-on's own
+  # compose network name. Scopes the Seam-1 bridge per deployment; a default
+  # single-stack host resolves it to papaia-mediawiki-net.
+  app_network: "${PAPAIA_PROJECT:-papaia}-mediawiki-net"
+  # nginx-proxy-manager publishes the wiki; librechat reaches the MCP server.
+  # keycloak is not needed: both the wiki and the MCP server talk to the
+  # browser-facing OIDC_ISSUER via host.docker.internal.
+  attach: [nginx-proxy-manager, librechat]
+
+# Env vars pointing at the bundled-Keycloak CA cert (mounted from
+# $PAPAIA_CONFIG_DIR/certs). papaia-ctl clears them via a generated override
+# when auth_provider=external_oidc, so the wiki and the MCP server fall back
+# to the system CA bundle instead of failing on the absent local-ca.crt.
+local_ca_env:
+  mediawiki: [MW_OIDC_CA_FILE]
+  mediawiki-mcp: [SSL_CERT_FILE]
+
+# Per-variable metadata: label (human-readable prompt text), hint (secondary
+# explanation), default (overrides .env.example value), default_from_core
+# (pulls value from core .env by key name), type (text|integer|url|decimal),
+# secret (bool — true forces masking, false opts out of name heuristic),
+# min/max (numeric bounds for integer/decimal), pattern (regex for text).
+# All fields are optional; readers ignore unknown manifest keys.
+env_prompts:
+
+  # ── Core OIDC ─────────────────────────────────────────────────────────────
+  PAPAIA_CONFIG_DIR:
+    label: "papAIa config directory"
+    hint: "Path to the directory created by papaia-ctl setup (PAPAIA_CONFIG_DIR)"
+    default_from_core: PAPAIA_CONFIG_DIR
+    type: text
+
+  OIDC_ISSUER:
+    label: "Keycloak issuer URL"
+    hint: "Browser-facing URL, must match OIDC_ISSUER from core setup"
+    default_from_core: OIDC_ISSUER
+    type: url
+
+  OIDC_GROUPS_CLAIM:
+    label: "Groups claim (wiki login)"
+    hint: "Claim in the mediawiki client's token that carries the user's groups"
+    type: text
+
+  # ── Wiki — site ───────────────────────────────────────────────────────────
+  MW_SERVER:
+    label: "Wiki public URL"
+    hint: "Browser-facing URL of the wiki (scheme + host + optional port, no trailing slash); the Keycloak redirect URI is derived from it"
+    default: "http://host.docker.internal:8020"
+    type: url
+    pattern: "^https?://[^/]+$"
+
+  MW_SITE_NAME:
+    label: "Wiki name"
+    type: text
+
+  MW_LANG:
+    label: "Content language"
+    hint: "ISO 639 code, e.g. en or de"
+    type: text
+    pattern: "^[a-z]{2,3}(-[a-z]+)?$"
+
+  MW_TIMEZONE:
+    label: "Time zone"
+    hint: "IANA name, e.g. Europe/Berlin"
+    type: text
+
+  # ── Wiki — secrets ────────────────────────────────────────────────────────
+  MW_SECRET_KEY:
+    label: "Wiki secret key"
+    hint: "Auto-generated on install; rotating it logs everyone out"
+    secret: true
+
+  MW_UPGRADE_KEY:
+    label: "Wiki upgrade key"
+    hint: "Auto-generated on install"
+    secret: true
+
+  # ── Wiki — database ───────────────────────────────────────────────────────
+  MW_DB_NAME:
+    label: "Database name"
+    type: text
+
+  MW_DB_USER:
+    label: "Database user"
+    type: text
+
+  MW_DB_PASSWORD:
+    label: "Database password"
+    hint: "Auto-generated on install"
+    secret: true
+
+  # ── Wiki — break-glass admin ──────────────────────────────────────────────
+  MW_ADMIN_USER:
+    label: "Break-glass admin username"
+    hint: "Local account; Keycloak login is the normal path"
+    type: text
+
+  MW_ADMIN_PASSWORD:
+    label: "Break-glass admin password"
+    hint: "Auto-generated; re-applied on every start"
+    secret: true
+
+  MW_ENABLE_LOCAL_LOGIN:
+    label: "Enable local password login"
+    hint: "true only for break-glass access; false = Keycloak only"
+    type: text
+    pattern: "^(true|false)$"
+
+  MW_AUTO_LOGIN:
+    label: "Redirect straight to Keycloak"
+    hint: "true = no login button, users land on Keycloak directly"
+    type: text
+    pattern: "^(true|false)$"
+
+  MW_OIDC_MIGRATE_BY_EMAIL:
+    label: "Link existing accounts by e-mail"
+    hint: "Leave false unless every e-mail address in Keycloak is verified"
+    type: text
+    pattern: "^(true|false)$"
+
+  # ── Wiki — access tiers ───────────────────────────────────────────────────
+  MW_NAMESPACES:
+    label: "Restricted namespaces"
+    hint: "Name:id,Name:id — ids even and >= 3000; empty = no tiers"
+    type: text
+    pattern: "^$|^[A-Za-z][A-Za-z0-9_]*:[0-9]+(,[A-Za-z][A-Za-z0-9_]*:[0-9]+)*$"
+
+  MW_NAMESPACE_READ_GROUPS:
+    label: "Groups per restricted namespace"
+    hint: "Name=group,group;Name=group — values of the groups claim"
+    type: text
+
+  MW_SYSOP_GROUPS:
+    label: "Wiki administrator groups"
+    hint: "Comma-separated groups whose members become sysop + bureaucrat"
+    type: text
+
+  # ── Wiki — mail ───────────────────────────────────────────────────────────
+  MW_SMTP_HOST:
+    label: "SMTP relay"
+    hint: "host:port, no authentication; empty = mail off"
+    type: text
+    pattern: "^$|^[^:\\s]+:[0-9]+$"
+
+  MW_EMAIL_FROM:
+    label: "Sender address"
+    type: text
+
+  # ── Wiki — uploads ────────────────────────────────────────────────────────
+  MW_ENABLE_UPLOADS:
+    label: "Enable file uploads"
+    type: text
+    pattern: "^(true|false)$"
+
+  MW_FILE_EXTENSIONS:
+    label: "Allowed file extensions"
+    hint: "Comma-separated, e.g. png,jpg,pdf"
+    type: text
+
+  MW_MAX_UPLOAD_MB:
+    label: "Maximum upload size (MB)"
+    type: integer
+    min: 1
+    max: 100
+
+  # ── Wiki — external port ──────────────────────────────────────────────────
+  MEDIAWIKI_EXT_PORT:
+    label: "Wiki host port"
+    hint: "Must match the port in MW_SERVER when the wiki is reached directly"
+    type: integer
+    min: 1
+    max: 65535
+
+  # ── Keycloak OIDC client secrets ──────────────────────────────────────────
+  # Filled after the Keycloak client import — see env_replace_secrets below.
+  KC_MEDIAWIKI_CLIENT_SECRET:
+    label: "Keycloak client secret (mediawiki)"
+    hint: "Copy from Keycloak Admin UI → Clients → mediawiki → Credentials → Client Secret"
+    secret: true
+
+  KC_MCP_MEDIAWIKI_CLIENT_SECRET:
+    label: "Keycloak client secret (mcp-mediawiki)"
+    hint: "Copy from Keycloak Admin UI → Clients → mcp-mediawiki → Credentials → Client Secret"
+    secret: true
+
+  # ── MCP server ────────────────────────────────────────────────────────────
+  MW_BOT_USER:
+    label: "MCP bot account"
+    type: text
+
+  MW_BOT_APPID:
+    label: "MCP bot password name"
+    type: text
+
+  WIKI_BOT_PASSWORD:
+    label: "MCP bot password"
+    hint: "Auto-generated; the wiki applies it on every start"
+    secret: true
+
+  MEDIAWIKI_MCP_OIDC_AUDIENCE:
+    label: "MCP server token audience"
+    hint: "Must match the mcp-mediawiki-audience mapper on the LibreChat Keycloak client"
+    type: text
+
+  MEDIAWIKI_MCP_OIDC_JWKS_CACHE_TTL:
+    label: "JWKS cache TTL (seconds)"
+    type: integer
+    min: 0
+
+  MEDIAWIKI_MCP_GROUPS_CLAIM:
+    label: "Groups claim (LibreChat token)"
+    hint: "Claim in the token LibreChat forwards; the core librechat client uses roles"
+    type: text
+
+  MEDIAWIKI_MCP_ADMIN_GROUP:
+    label: "MCP admin group"
+    hint: "Full access through the MCP server plus the ACL admin tools"
+    type: text
+
+  MEDIAWIKI_MCP_ACL_SEED:
+    label: "MCP ACL seeding"
+    hint: "if-empty, sync or off"
+    type: text
+    pattern: "^(if-empty|sync|off)$"
+
+  MEDIAWIKI_MCP_MAIN_GROUPS:
+    label: "MCP main-namespace groups"
+    hint: "Empty = every group named in a tier"
+    type: text
+
+  MEDIAWIKI_MCP_LOG_LEVEL:
+    label: "MCP log level"
+    hint: "One of: DEBUG, INFO, WARNING, ERROR"
+    type: text
+
+env_replace_secrets:
+  KC_MEDIAWIKI_CLIENT_SECRET:
+    hint: "Keycloak Admin UI → Clients → mediawiki → Credentials → Client Secret"
+  KC_MCP_MEDIAWIKI_CLIENT_SECRET:
+    hint: "Keycloak Admin UI → Clients → mcp-mediawiki → Credentials → Client Secret"
+
+integration:
+  keycloak:
+    clients:
+      - integration/infra/keycloak/mediawiki.json
+      - integration/infra/keycloak/mcp-mediawiki.json
+    client_mappers:
+      librechat:
+        - integration/infra/keycloak/librechat-audience-mapper.json
+  librechat: integration/ai/librechat/librechat.yaml
+  nginx: integration/infra/nginx/mediawiki.conf

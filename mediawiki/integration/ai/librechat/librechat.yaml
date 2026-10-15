@@ -1,0 +1,17 @@
+mcpServers:
+  MediaWiki:
+    title: 'MediaWiki'
+    description: 'OIDC-secured knowledge base with access tiers via MediaWiki.'
+    type: streamable-http
+    url: http://mediawiki-mcp:8000/mcp
+    headers:
+      Authorization: "Bearer {{LIBRECHAT_OPENID_ACCESS_TOKEN}}"
+    # Lazy init: mediawiki-mcp validates a real user Bearer token. Without
+    # startup: false, LibreChat connects at process start with the
+    # unsubstituted placeholder, gets a 401, and falls back to MCP OAuth
+    # discovery -- which then times out instead of failing fast.
+    startup: false
+
+mcpSettings:
+  allowedDomains:
+    - "http://mediawiki-mcp:8000"

@@ -10,6 +10,14 @@ based on merged pull requests; this file mirrors the published releases.
 
 ## [Unreleased]
 
+### Added
+- **mediawiki add-on**: a MediaWiki 1.43 knowledge base with Keycloak login
+  and group sync, namespace-level access tiers (Lockdown, plus filters for
+  search, export, recent changes, the Action API and transclusion), and an
+  OIDC/RBAC MCP server for LibreChat whose initial grants are derived from
+  the same tiers. The first start installs the schema and creates the
+  break-glass admin and the MCP bot account without manual steps.
+
 ## [1.1.0] - 2026-09-04
 
 ### Added

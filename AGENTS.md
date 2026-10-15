@@ -12,6 +12,7 @@ Current catalog:
 
 | Add-on | What it adds |
 |---|---|
+| `mediawiki` | A MediaWiki knowledge base with Keycloak login and group sync, namespace-level access tiers, and an OIDC/RBAC MCP server that gives LibreChat the same tiers |
 | `n8n` | n8n workflow automation behind an oauth2-proxy Keycloak SSO gate — the engine is never published, and only the webhook paths bypass the gate |
 | `paperless` | Paperless-ngx document management, an OIDC/RBAC MCP server for AI-assisted document access via LibreChat, and Keycloak SSO login for Paperless users |
 | `paperless-connect` | The same MCP/Keycloak layer as `paperless`, pointed at an existing standalone Paperless-ngx instance instead of a bundled one |
@@ -39,7 +40,7 @@ papaia-addons/
 └── README.md
 ```
 
-`qdrant-ingest` additionally ships `jobs.example.yaml`, a template for the ingest job definitions the operator web interface manages. `n8n` additionally ships `nginx.conf`, the config template of its logout shim (swappable via `N8N_PROXY_CONF`).
+`qdrant-ingest` additionally ships `jobs.example.yaml`, a template for the ingest job definitions the operator web interface manages. `mediawiki` additionally ships `image/` (the Dockerfile, entrypoint and env-driven `LocalSettings.php` of its wiki image), `mcp-acl-seed.py` (derives the MCP grants from the access tiers) and `settings.d/` (site-specific settings). `n8n` additionally ships `nginx.conf`, the config template of its logout shim (swappable via `N8N_PROXY_CONF`).
 
 ---
 

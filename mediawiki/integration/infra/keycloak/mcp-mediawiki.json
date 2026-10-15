@@ -1,0 +1,14 @@
+{
+  "clientId": "mcp-mediawiki",
+  "name": "MCP MediaWiki",
+  "description": "OIDC resource server — validates forwarded LibreChat user tokens; no login flows",
+  "enabled": true,
+  "protocol": "openid-connect",
+  "clientAuthenticatorType": "client-secret",
+  "publicClient": false,
+  "standardFlowEnabled": false,
+  "implicitFlowEnabled": false,
+  "directAccessGrantsEnabled": false,
+  "serviceAccountsEnabled": false,
+  "fullScopeAllowed": false
+}

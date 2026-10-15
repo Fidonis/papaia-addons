@@ -1,0 +1,37 @@
+{
+  "clientId": "mediawiki",
+  "name": "MediaWiki",
+  "description": "MediaWiki knowledge base — OIDC login via Keycloak",
+  "enabled": true,
+  "clientAuthenticatorType": "client-secret",
+  "rootUrl": "http://host.docker.internal:8020",
+  "baseUrl": "/",
+  "redirectUris": ["/index.php/Special:PluggableAuthLogin", "/index.php?title=Special:PluggableAuthLogin*"],
+  "webOrigins": ["+"],
+  "attributes": {
+    "post.logout.redirect.uris": "+"
+  },
+  "standardFlowEnabled": true,
+  "implicitFlowEnabled": false,
+  "directAccessGrantsEnabled": false,
+  "serviceAccountsEnabled": false,
+  "publicClient": false,
+  "protocol": "openid-connect",
+  "fullScopeAllowed": true,
+  "protocolMappers": [
+    {
+      "name": "groups",
+      "protocol": "openid-connect",
+      "protocolMapper": "oidc-usermodel-realm-role-mapper",
+      "consentRequired": false,
+      "config": {
+        "multivalued": "true",
+        "userinfo.token.claim": "true",
+        "id.token.claim": "true",
+        "access.token.claim": "true",
+        "claim.name": "groups",
+        "jsonType.label": "String"
+      }
+    }
+  ]
+}

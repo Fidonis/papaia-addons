@@ -9,6 +9,7 @@ deployment.
 
 | Add-on | Description |
 |---|---|
+| [`mediawiki`](mediawiki/) | MediaWiki knowledge base with access tiers + OIDC/RBAC MCP server |
 | [`n8n`](n8n/) | n8n workflow automation behind a Keycloak SSO gate |
 | [`paperless`](paperless/) | Paperless-ngx document management + OIDC/RBAC MCP server |
 | [`paperless-connect`](paperless-connect/) | OIDC/RBAC MCP server for an existing standalone Paperless-ngx instance |

@@ -3,7 +3,8 @@
 MediaWiki knowledge base add-on for [papaia](https://github.com/Fidonis/papaia).
 
 Adds a MediaWiki wiki with Keycloak login and group sync, namespace-level
-access tiers, and an OIDC/RBAC-secured MCP server that gives LibreChat the
+access tiers, and the [MediaWiki MCP Server](https://github.com/ProfessionalWiki/MediaWiki-MCP-Server),
+through which LibreChat works in the wiki as the signed-in user -- within the
 same tiers the browser enforces.
 
 **Requires papaia ≥ 1.3.0** (`addon_api` 2).
@@ -14,28 +15,30 @@ same tiers the browser enforces.
 
 | Service | Port | Description |
 |---|---|---|
-| `mediawiki` | `8020` (configurable) | MediaWiki 1.43 (LTS) with PluggableAuth, OpenIDConnect, Lockdown, VisualEditor, Cite, ParserFunctions |
+| `mediawiki` | `8020` (configurable) | MediaWiki 1.43 (LTS) with PluggableAuth, OpenIDConnect, Lockdown, OAuth, VisualEditor, Cite, ParserFunctions; also serves the MCP server under `/mcp` |
 | `mediawiki-db` | internal | MariaDB 11.8 |
-| `mediawiki-mcp` | internal | [mediawiki-mcp-rbac](https://github.com/Fidonis/mediawiki-mcp-rbac) MCP server for LibreChat |
-| `mediawiki-mcp-acl-seed` | — | One-shot: writes the MCP server's initial grants from the access tiers |
+| `mediawiki-mcp` | via the wiki, `/mcp` | [MediaWiki MCP Server](https://github.com/ProfessionalWiki/MediaWiki-MCP-Server) with per-user OAuth sign-in |
 
 All services run on the add-on's own bridge network,
 `${PAPAIA_PROJECT:-papaia}-mediawiki-net` — `papaia-mediawiki-net` on a default
 single-stack host, or `papaia-<env>-mediawiki-net` when several papAIa
-deployments share a host. Only the wiki is published on a host port; LibreChat
-reaches the MCP server over this network.
+deployments share a host. Only the wiki is published on a host port. It
+proxies `/mcp` and the OAuth discovery paths (`/.well-known/oauth-*`) to the
+MCP server, so one host name, certificate and proxy entry serve both.
 
 | Volume | Content |
 |---|---|
 | `mediawiki-dbdata` | Pages, revisions, users, groups |
 | `mediawiki-images` | Uploaded files |
-| `mediawiki-mcp-data` | MCP access grants and login-proxy state |
+| `mediawiki-oauth` | Key pair that signs the wiki's OAuth access tokens |
+| `mediawiki-mcp-credentials` | The MCP server's OAuth consumer key and secret, written by the wiki |
+| `mediawiki-mcp-data` | The MCP server's encrypted session store (who is signed in) |
 
 ### The image
 
 `image/` holds the Dockerfile of the wiki image: the official `mediawiki:1.43`
-image plus PluggableAuth, OpenIDConnect and Lockdown, each pinned to a commit,
-and an environment-driven `LocalSettings.php`. When the image named in
+image plus PluggableAuth, OpenIDConnect, Lockdown and OAuth, each pinned to a
+commit, and an environment-driven `LocalSettings.php`. When the image named in
 `MEDIAWIKI_IMAGE` cannot be pulled, Docker Compose builds it from `image/` on
 the first start, which needs internet access and takes a few minutes.
 
@@ -52,18 +55,21 @@ papaia-ctl addon install mediawiki --path=addons/mediawiki
 
 # 3. Follow the Keycloak checklist printed by install (see "Keycloak" below)
 
-# 4. Set MW_SERVER and the two KC_*_CLIENT_SECRET values in
-#    <papaia-config>/addons/mediawiki/.env
+# 4. Set MW_SERVER, MEDIAWIKI_MCP_PUBLIC_URL, MEDIAWIKI_MCP_ALLOWED_REDIRECTS
+#    and KC_MEDIAWIKI_CLIENT_SECRET in <papaia-config>/addons/mediawiki/.env
 
-# 5. Start the add-on, then the core so nginx and librechat join its network
+# 5. Point LibreChat at the MCP server (see "LibreChat" below)
+
+# 6. Start the add-on, then the core so nginx joins its network and
+#    LibreChat picks up the MCP server
 papaia-ctl addon start mediawiki
 papaia-ctl start
 ```
 
-Database password, wiki keys, the break-glass admin password and the MCP bot
-password are generated on install. Nothing else has to be copied by hand: the
-wiki creates the bot account and sets its bot password from the same `.env`
-the MCP server reads.
+Database password, wiki keys, the break-glass admin password and the MCP
+server's signing key are generated on install. The wiki creates the MCP
+server's OAuth consumer itself and hands it the credentials over a shared
+volume, so no MCP credential has to be copied by hand.
 
 ---
 
@@ -79,37 +85,37 @@ The wiki container brings itself into a usable state before Apache starts
    the schema after an image upgrade. A new image means a new container, so
    upgrades are covered without paying for it on every restart.
 3. **Every start:** the break-glass admin gets its groups and the password
-   from `MW_ADMIN_PASSWORD`, and the MCP bot account gets the bot password from
-   `WIKI_BOT_PASSWORD`. Rotating either value takes effect after a restart.
+   from `MW_ADMIN_PASSWORD`; rotating it takes effect after a restart.
+4. **OAuth:** the key pair that signs access tokens is generated once and kept
+   on the `mediawiki-oauth` volume. The MCP server's OAuth 2.0 consumer
+   (`papaia-mcp`, owned by the break-glass admin) is created and approved for
+   the callback `<MEDIAWIKI_MCP_PUBLIC_URL>/oauth/callback`; later starts find
+   it again. A changed public URL creates a new consumer and disables the old
+   one. The key and secret go to the `mediawiki-mcp-credentials` volume,
+   which the MCP server reads at start.
 
 ---
 
 ## Keycloak
 
-Import both clients into the `papaia` realm and add the audience mapper to the
-existing `librechat` client:
+Import one client into the `papaia` realm:
 
 | File | Where |
 |---|---|
 | `integration/infra/keycloak/mediawiki.json` | Clients → Import client |
-| `integration/infra/keycloak/mcp-mediawiki.json` | Clients → Import client |
-| `integration/infra/keycloak/librechat-audience-mapper.json` | Clients → librechat → Client scopes → Dedicated → Add mapper → By configuration |
 
 After the import:
 
 - **Root URL of `mediawiki`:** set it to `MW_SERVER`. The redirect URIs are
   relative to it (`/index.php/Special:PluggableAuthLogin`); the imported value
   is the default `http://host.docker.internal:8020`.
-- **Secrets:** copy the client secrets of `mediawiki` and `mcp-mediawiki`
-  (Credentials tab) into `KC_MEDIAWIKI_CLIENT_SECRET` and
-  `KC_MCP_MEDIAWIKI_CLIENT_SECRET`.
+- **Secret:** copy the client secret (Credentials tab) into
+  `KC_MEDIAWIKI_CLIENT_SECRET`.
 
-The `groups` protocol mapper on the `mediawiki` client puts the user's realm
-roles into the `groups` claim, the same shape as the paperless add-on. The
-token LibreChat forwards to the MCP server comes from the core `librechat`
-client, which carries the same realm roles under `roles` — hence
-`MEDIAWIKI_MCP_GROUPS_CLAIM=roles`. Both claims hold the same names, so a
-user's tier is the same in the browser and in LibreChat.
+The `groups` protocol mapper on the client puts the user's realm roles into
+the `groups` claim, the same shape as the paperless add-on. The MCP server
+needs no Keycloak client: users sign in to it through the wiki, so their
+Keycloak login is the wiki's.
 
 ---
 
@@ -133,7 +139,7 @@ MW_SYSOP_GROUPS=papaia-admin
 Every group named here becomes a wiki group of the same name. PluggableAuth
 syncs it from the token on every login, adding and removing membership, so
 access is managed in Keycloak only. A user needs to log in again to pick up a
-new role. A namespace without groups, or groups for an unlisted namespace,
+new role -- and to lose one; see [Group changes](#group-changes). A namespace without groups, or groups for an unlisted namespace,
 stops the wiki from starting with a message naming the mistake.
 
 ### What is protected
@@ -145,15 +151,16 @@ search. The add-on closes the paths Lockdown leaves open, per viewer:
 
 | Path | Handling |
 |---|---|
-| Full-text search, UI and API | Tier namespaces hidden; explicitly searching one is refused |
+| Full-text search, UI and API | Tier namespaces hidden; hidden ones are dropped from the namespaces a search asks for, and a search in hidden ones only is refused |
+| Action API prop modules (`prop=revisions`, `info`, …) | Pages from hidden tiers reduced to their title, so edit summaries and other revision metadata stay hidden |
 | `Special:Export`, API `export` | Restricted to sysops and the `all-tiers` group |
 | `Special:RecentChanges`, `Special:Watchlist`, their feeds, `Special:NewPages`, `Special:Contributions` | Entries from hidden tiers filtered out, including edit summaries |
 | Action API list modules (`recentchanges`, `allpages`, `logevents`, `usercontribs`, `allrevisions`, …) | Entries from hidden tiers removed from the result |
-| Transclusion (`{{:Internal:Page}}`, `msgnw:`, `raw:`, `expandtemplates`, `parse`) | Only allowed from a page in the same tier, so no rendered or cached page outside a tier carries its content |
+| Transclusion (`{{:Internal:Page}}`, `msgnw:`, `raw:`, `expandtemplates`, `parse`) | Only allowed from a page in the same tier, so no rendered or cached page outside a tier carries its content; refused for a viewer outside the tier even when the parse names a tier page as context |
 | Uploaded files | Served through `img_auth.php` with a permission check; direct `/images/` access is denied |
 
-The break-glass admin and the MCP bot are members of the `all-tiers` group and
-pass every tier.
+The break-glass admin is a member of the `all-tiers` group and passes every
+tier.
 
 ### What is not protected
 
@@ -170,29 +177,41 @@ whose title alone is sensitive out of it.
 
 ### Through the MCP server
 
-The MCP server does not ask the wiki who may read what: it calls the Action
-API with one bot account that passes every tier, and enforces its own
-page-prefix ACL keyed to the caller's groups claim. On the first start the
-`mediawiki-mcp-acl-seed` container derives that ACL from the tiers above:
+The MCP server holds no access rules of its own. Each user signs in to it once
+through the wiki (Keycloak login, then a consent page listing what the MCP
+server may do), and every tool call runs as that wiki user with the user's
+own groups. The tiers, the filters above and Lockdown therefore apply to
+LibreChat exactly as to the browser, and every edit made through LibreChat is
+recorded under the user's name.
 
-- `rw` on `Name:`, `Name talk:` and `Name_talk:` for each group of a tier;
-- `rw` on the main namespace (`*`) for `MEDIAWIKI_MCP_MAIN_GROUPS`, by default
-  every group named in a tier.
+The consent covers reading, editing, creating, moving, uploading, deleting
+and protecting pages -- as far as the user's own rights reach; it never adds a
+right. Each user can review and revoke it at
+`Special:OAuthManageMyGrants`.
 
-A caller outside the tier gets an explicit `forbidden` error, not an empty
-result. A caller in none of the groups is refused by the MCP server outright.
-Members of `MEDIAWIKI_MCP_ADMIN_GROUP` (default `papaia-admin`) bypass the ACL
-and can change it at runtime with the `grant_access`, `revoke_access` and
-`list_acl` tools.
+### Group changes
 
-`MEDIAWIKI_MCP_ACL_SEED` controls how the ACL follows later changes of the
-tiers:
+Wiki groups follow Keycloak at the moment of a **browser login to the wiki**,
+not continuously. Two consequences:
 
-| Value | Effect |
-|---|---|
-| `if-empty` (default) | Seed an empty ACL only; later changes via `grant_access` are kept |
-| `sync` | Add the derived grants on every start; never revokes |
-| `off` | Manage the ACL with the admin tools only |
+- **Granting a role** takes effect when the user next logs in to the wiki in
+  the browser. Signing in to the MCP server from LibreChat counts as such a
+  login only when the browser has no wiki session yet.
+- **Revoking a role** takes effect at the same point. Until then the user keeps
+  the tier -- in the browser while the wiki session lasts, and in LibreChat
+  while the MCP connection lasts: the MCP server refreshes its wiki token on
+  its own for up to 30 days without a new login.
+
+To cut tier access at once, remove the role in Keycloak first, then remove
+the user from the tier group in the wiki (`Special:UserRights`, as a sysop).
+That takes effect on the next request, in the browser and through the MCP
+server alike; the next login would have done the same. In that order, a login
+in between cannot add the group back.
+
+The MCP connection itself ends when the user revokes it at
+`Special:OAuthManageMyGrants`. An administrator can only disable the
+`papaia-mcp` consumer as a whole (`Special:OAuthManageConsumers`), which signs
+every user out of the MCP server until it is re-enabled.
 
 ---
 
@@ -242,7 +261,7 @@ cp .env.example .env
 ```
 
 Fill in every `CHANGE_ME`, replace every `GENERATE_SECRET` with a random value
-(e.g. `openssl rand -hex 24`), and set the two `KC_*_CLIENT_SECRET` values after
+(e.g. `openssl rand -hex 24`), and set `KC_MEDIAWIKI_CLIENT_SECRET` after
 step 2.
 
 | Variable | Description |
@@ -253,13 +272,14 @@ step 2.
 | `MW_SECRET_KEY`, `MW_UPGRADE_KEY` | Random values |
 | `MW_DB_PASSWORD` | Random value |
 | `MW_ADMIN_PASSWORD` | Break-glass admin password |
-| `WIKI_BOT_PASSWORD` | MCP bot password, at least 16 characters |
 | `KC_MEDIAWIKI_CLIENT_SECRET` | Secret of the `mediawiki` Keycloak client |
-| `KC_MCP_MEDIAWIKI_CLIENT_SECRET` | Secret of the `mcp-mediawiki` Keycloak client |
+| `MEDIAWIKI_MCP_PUBLIC_URL` | `<MW_SERVER>/mcp`; https unless the host is `localhost` |
+| `MEDIAWIKI_MCP_SIGNING_KEY` | Random value, at least 32 characters |
+| `MEDIAWIKI_MCP_ALLOWED_REDIRECTS` | OAuth callbacks of the MCP clients, e.g. LibreChat's |
 
 With an external identity provider whose certificate is publicly trusted, set
-`MW_OIDC_CA_FILE` and `SSL_CERT_FILE` to an empty value in a compose override,
-so the system CA bundle is used.
+`MW_OIDC_CA_FILE` to an empty value in a compose override, so the system CA
+bundle is used.
 
 ### 2. Register Keycloak clients
 
@@ -267,14 +287,11 @@ See [Keycloak](#keycloak) above.
 
 ### 3. Wire the network (Seam 1)
 
-Attach `nginx-proxy-manager` and `librechat` to the add-on network:
+Attach `nginx-proxy-manager` to the add-on network:
 
 ```yaml
 # papaia-config/overrides/docker-compose.mediawiki.override.yml
 services:
-  librechat:
-    networks:
-      - ${PAPAIA_PROJECT:-papaia}-mediawiki-net
   nginx-proxy-manager:
     networks:
       - ${PAPAIA_PROJECT:-papaia}-mediawiki-net
@@ -295,31 +312,62 @@ docker compose -f papaia/src/docker-compose.yml \
 
 ### 4. Add the MCP server to LibreChat (Seam 3)
 
-Merge `integration/ai/librechat/librechat.yaml` into your effective
-`librechat.yaml` (or `papaia-config/overlay/ai/librechat/librechat.yaml`):
-
-```yaml
-mcpServers:
-  MediaWiki:
-    title: 'MediaWiki'
-    description: 'OIDC-secured knowledge base with access tiers via MediaWiki.'
-    type: streamable-http
-    url: http://mediawiki-mcp:8000/mcp
-    headers:
-      Authorization: "Bearer {{LIBRECHAT_OPENID_ACCESS_TOKEN}}"
-    startup: false
-
-mcpSettings:
-  allowedDomains:
-    - "http://mediawiki-mcp:8000"
-    # ... keep any existing entries
-```
+See [LibreChat](#librechat) below.
 
 ### 5. Configure the reverse proxy (Seam 5, optional)
 
 `integration/infra/nginx/mediawiki.conf` is a reference for the Nginx Proxy
 Manager: a proxy host for `mediawiki:80` on the add-on network, with
-`client_max_body_size` raised for uploads. Set `MW_SERVER` to the proxied URL.
+`client_max_body_size` raised for uploads and response buffering off for
+`/mcp`. Set `MW_SERVER` to the proxied URL and `MEDIAWIKI_MCP_PUBLIC_URL` to
+the same URL plus `/mcp`.
+
+---
+
+## LibreChat
+
+LibreChat reaches the MCP server at its public URL, as the user's browser does
+during sign-in, so the address differs per deployment. The add-on's fragment
+(`integration/ai/librechat/librechat.yaml`, merged on install) registers the
+server with a placeholder; replace it in the customer overlay
+`<papaia-config>/overlay/ai/librechat/librechat.yaml`, which is merged last:
+
+```yaml
+mcpServers:
+  MediaWiki:
+    url: https://wiki.example.org/mcp     # = MEDIAWIKI_MCP_PUBLIC_URL
+
+mcpSettings:
+  allowedDomains:
+    - "wiki.example.org"                  # host of that URL
+```
+
+Then let the MCP server accept LibreChat's sign-in callback, in the add-on
+`.env`:
+
+```bash
+# <DOMAIN_SERVER of LibreChat>/api/mcp/MediaWiki/oauth/callback
+MEDIAWIKI_MCP_ALLOWED_REDIRECTS=https://chat.example.org/api/mcp/MediaWiki/oauth/callback
+```
+
+Requirements:
+
+- `MEDIAWIKI_MCP_PUBLIC_URL` must be **https**, and LibreChat must trust its
+  certificate. With the papaia local CA, LibreChat already does
+  (`NODE_EXTRA_CA_CERTS`). A plain-http wiki on `localhost` serves MCP
+  clients on the Docker host only, not LibreChat.
+- The LibreChat container must reach that URL, as it fetches the OAuth
+  metadata and exchanges tokens there.
+
+Each user then connects once: in the chat, select the MediaWiki MCP server,
+follow the sign-in link (wiki login via Keycloak, then the consent page), and
+the tools are available. The connection lasts until the user revokes it or
+does not use it for 30 days.
+
+Other MCP clients sign in the same way. The MCP server trusts loopback
+callbacks and those of a few hosted clients by default (see its
+documentation); any other client's callback goes into
+`MEDIAWIKI_MCP_ALLOWED_REDIRECTS`.
 
 ---
 
@@ -345,26 +393,33 @@ papaia-ctl addon remove mediawiki
 # Uninstall: config bundle, deployment entry and containers removed, volumes kept
 papaia-ctl addon uninstall mediawiki
 
-# Uninstall and delete the volumes — wiki content, uploads and MCP grants are gone
+# Uninstall and delete the volumes — wiki content, uploads and MCP sign-ins are gone
 papaia-ctl addon uninstall mediawiki --clean-up
 ```
 
-`papaia-ctl backup` captures all three volumes and the config bundle with the
-generated secrets; a restore brings back pages, users, groups, uploads and the
-MCP grants.
+`papaia-ctl backup` captures the volumes and the config bundle with the
+generated secrets; a restore brings back pages, users, groups, uploads, the
+OAuth signing keys and the MCP sign-ins.
 
 ---
 
 ## Security notes
 
-- **Network isolation:** the database and the MCP server are not published.
-  Only `nginx` and `librechat` join the add-on network.
+- **Network isolation:** the database and the MCP server are not published;
+  the MCP server is reachable only through the wiki's `/mcp` path. Only
+  `nginx` joins the add-on network.
+- **Per-user identity:** the MCP server acts as the signed-in user, never as
+  a shared account. The wiki's own permission checks decide every call, and
+  edits are attributed to the user. Shared bot passwords are switched off.
 - **Per-service environment:** no container loads the `.env` wholesale. The
   MCP server never sees the database or admin password; the wiki never sees
-  the MCP client secret.
-- **Bot password scope:** the MCP bot logs in with a bot password limited to
-  reading, editing, moving and deleting pages. It cannot change user rights or
-  site configuration.
+  the MCP signing key.
+- **OAuth consumer:** only sysops can create or approve consumers. The
+  add-on's consumer is confidential (client secret), uses PKCE through the MCP
+  server, and accepts exactly one callback URL.
+- **Sign-in callbacks:** the MCP server hands an authorization only to
+  loopback addresses, a few vendor clients and the callbacks in
+  `MEDIAWIKI_MCP_ALLOWED_REDIRECTS`.
 - **Account linking by e-mail** is off (`MW_OIDC_MIGRATE_BY_EMAIL=false`), so
   an identity-provider account cannot take over a wiki account by claiming its
   address.
@@ -376,5 +431,9 @@ MCP grants.
 ## Known limitations
 
 - **Keycloak client registration** is manual; see [Keycloak](#keycloak).
+- **LibreChat URL** of the MCP server is set per deployment in the overlay;
+  see [LibreChat](#librechat).
+- **Group changes** reach the MCP server only with the next browser login to
+  the wiki; see [Group changes](#group-changes).
 - **Search** uses MediaWiki's built-in MariaDB full-text search. Tier members
   tick the tier namespace under *Advanced search* once to include it.

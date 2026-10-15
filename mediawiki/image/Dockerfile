@@ -6,6 +6,7 @@
 # a container start never reaches out to the network:
 #   PluggableAuth + OpenIDConnect  Keycloak login with group sync
 #   Lockdown                       namespace-level read restrictions
+#   OAuth                          per-user sign-in for the MCP server
 #   VisualEditor, Cite, ParserFunctions, WikiEditor  bundled with core
 #
 # Extensions are pinned to a commit on their REL1_43 branch rather than the
@@ -18,6 +19,7 @@ FROM docker.io/library/mediawiki:1.43.11
 ARG PLUGGABLEAUTH_REF=afec61097c7b08e0c67641cc9cb5ee27b2d627f7
 ARG OPENIDCONNECT_REF=975992f2978e11f66b1ad5fd64e005592ba2fec3
 ARG LOCKDOWN_REF=acd8edcd542f8b057929908667d4962ee295cc0f
+ARG OAUTH_REF=ce3cc800e24142c04654d59597b0f89c107e3dd2
 
 COPY --from=composer /usr/bin/composer /usr/local/bin/composer
 
@@ -35,8 +37,11 @@ RUN apt-get update \
     && fetch PluggableAuth  extensions/PluggableAuth  "$PLUGGABLEAUTH_REF" \
     && fetch OpenIDConnect  extensions/OpenIDConnect  "$OPENIDCONNECT_REF" \
     && fetch Lockdown       extensions/Lockdown       "$LOCKDOWN_REF" \
-    && COMPOSER_ALLOW_SUPERUSER=1 composer install --working-dir=extensions/OpenIDConnect \
-         --no-dev --no-interaction --no-progress --optimize-autoloader \
+    && fetch OAuth          extensions/OAuth          "$OAUTH_REF" \
+    && for ext in OpenIDConnect OAuth; do \
+         COMPOSER_ALLOW_SUPERUSER=1 composer install --working-dir="extensions/$ext" \
+           --no-dev --no-interaction --no-progress --optimize-autoloader || exit 1; \
+       done \
     && rm /usr/local/bin/composer \
     && apt-get purge -y --auto-remove git unzip \
     && rm -rf /var/lib/apt/lists/* /root/.composer
@@ -62,13 +67,22 @@ RUN { \
     } > /etc/apache2/conf-available/papaia-mediawiki.conf \
     && a2enconf papaia-mediawiki
 
+# The MCP server is published under the wiki's own origin (<MW_SERVER>/mcp),
+# so a single host, certificate and proxy entry serve both. Its OAuth
+# discovery documents live at the root of that origin. The upstream is
+# resolved per request: without the MCP service these paths answer 503 and
+# the wiki is unaffected.
+COPY mcp-proxy.conf /etc/apache2/conf-available/papaia-mediawiki-mcp.conf
+RUN a2enmod proxy proxy_http && a2enconf papaia-mediawiki-mcp
+
 # Copied into place by the entrypoint after install.php, which refuses to
 # run while a LocalSettings.php exists.
 COPY LocalSettings.php /usr/local/share/papaia-mediawiki/LocalSettings.php
-COPY EnsureBotPassword.php /usr/local/share/papaia-mediawiki/EnsureBotPassword.php
+COPY EnsureOAuthConsumer.php /usr/local/share/papaia-mediawiki/EnsureOAuthConsumer.php
 COPY entrypoint.sh /usr/local/bin/papaia-mediawiki-entrypoint
 RUN chmod 0755 /usr/local/bin/papaia-mediawiki-entrypoint \
-    && mkdir -p /etc/papaia-mediawiki/settings.d /var/lib/papaia-mediawiki
+    && mkdir -p /etc/papaia-mediawiki/settings.d /var/lib/papaia-mediawiki \
+       /var/lib/papaia-mediawiki-oauth /var/lib/papaia-mediawiki-mcp
 
 ENTRYPOINT ["/usr/local/bin/papaia-mediawiki-entrypoint"]
 CMD ["apache2-foreground"]

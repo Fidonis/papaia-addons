@@ -143,8 +143,9 @@ $wgGroupPermissions['user']['edit'] = true;
 # Pages reachable before login, so the OIDC round-trip can start and finish.
 $wgWhitelistRead = [ 'Special:UserLogin', 'Special:PluggableAuthLogin', 'Special:UserLogout' ];
 
-# The MCP server's bot account authenticates with a bot password.
-$wgEnableBotPasswords = true;
+# API clients sign in per user through OAuth (see below); shared bot
+# passwords would bypass that.
+$wgEnableBotPasswords = false;
 
 ## ── Authentication: Keycloak (PluggableAuth + OpenIDConnect) ──────────────
 wfLoadExtension( 'PluggableAuth' );
@@ -170,8 +171,8 @@ $wgOpenIDConnect_MigrateUsersByEmail = papaiaEnvBool( 'MW_OIDC_MIGRATE_BY_EMAIL'
 # MW_SYSOP_GROUPS        groups whose members become sysop + bureaucrat
 #
 # Group names are the values of the groups claim; each one becomes a wiki
-# group of the same name, synced on every login. The local admin and the MCP
-# bot are members of PAPAIA_ALL_TIERS_GROUP and pass every tier.
+# group of the same name, synced on every login. The local admin is a member
+# of PAPAIA_ALL_TIERS_GROUP and passes every tier.
 const PAPAIA_ALL_TIERS_GROUP = 'all-tiers';
 
 /** @var array<int,array{name:string,groups:string[]}> $papaiaTiers keyed by namespace id */
@@ -230,11 +231,10 @@ foreach ( $papaiaTiers as $papaiaNsId => $papaiaTier ) {
 	foreach ( $papaiaAllowed as $papaiaGroup ) {
 		$wgGroupPermissions[$papaiaGroup][$papaiaEditRight] = true;
 	}
-	# Bot-password and OAuth sessions only keep rights some grant covers;
-	# without this a member signed in through an API client could read a
-	# tier but not edit it. The right itself stays limited to the groups.
+	# OAuth sessions only keep rights some grant covers; without this a
+	# member signed in through the MCP server could read a tier but not edit
+	# it. The right itself stays limited to the groups.
 	$wgGrantPermissions['editpage'][$papaiaEditRight] = true;
-	$wgGrantPermissions['editprotected'][$papaiaEditRight] = true;
 }
 
 # Special:Export bypasses the per-page read check on some paths; restrict it
@@ -476,6 +476,30 @@ $wgPluggableAuth_Config[papaiaEnv( 'MW_LOGIN_BUTTON_LABEL', 'Log in with Keycloa
 		'map' => $papaiaGroupMap,
 	] ] : [],
 ];
+
+## ── OAuth: per-user sign-in for the MCP server ────────────────────────────
+# The MCP server signs each user in through one OAuth 2.0 consumer that the
+# entrypoint creates (EnsureOAuthConsumer.php). Every MCP call then runs as
+# that user, so the access tiers above apply unchanged. Tokens carry the
+# user's wiki identity, not their Keycloak groups: groups follow Keycloak
+# only on the next browser login to the wiki (see README, "Access tiers").
+wfLoadExtension( 'OAuth' );
+$wgMWOAuthCentralWiki = false;
+# Only redirects OAuth 1.0a token requests to https; the wiki may run on
+# plain http behind a TLS-terminating proxy or on a local test host.
+$wgMWOAuthSecureTokenTransfer = str_starts_with( $wgServer, 'https://' );
+# Signing key pair for OAuth 2.0 access tokens, generated on first start and
+# kept on a volume so tokens survive a container recreate.
+$wgOAuth2PrivateKey = '/var/lib/papaia-mediawiki-oauth/oauth2.key';
+$wgOAuth2PublicKey = '/var/lib/papaia-mediawiki-oauth/oauth2.pub';
+# Consumers are managed by administrators only; every user may review and
+# revoke what they authorized (Special:OAuthManageMyGrants).
+$wgGroupPermissions['user']['mwoauthproposeconsumer'] = false;
+$wgGroupPermissions['user']['mwoauthupdateownconsumer'] = false;
+$wgGroupPermissions['user']['mwoauthmanagemygrants'] = true;
+foreach ( [ 'mwoauthproposeconsumer', 'mwoauthupdateownconsumer', 'mwoauthmanageconsumer' ] as $papaiaRight ) {
+	$wgGroupPermissions['sysop'][$papaiaRight] = true;
+}
 
 ## ── Misc ──────────────────────────────────────────────────────────────────
 $wgShowExceptionDetails = papaiaEnvBool( 'MW_DEBUG', false );

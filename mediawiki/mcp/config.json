@@ -1,0 +1,16 @@
+{
+  "allowWikiManagement": false,
+  "defaultWiki": "wiki",
+  "wikis": {
+    "wiki": {
+      "sitename": "${MW_SITE_NAME}",
+      "server": "http://mediawiki",
+      "publicServer": "${MW_SERVER}",
+      "articlepath": "/index.php",
+      "scriptpath": "",
+      "private": true,
+      "oauth2ClientId": "${WIKI_OAUTH_CLIENT_ID}",
+      "oauth2ClientSecret": "${WIKI_OAUTH_CLIENT_SECRET}"
+    }
+  }
+}

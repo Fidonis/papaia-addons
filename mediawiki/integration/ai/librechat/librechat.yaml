@@ -1,17 +1,24 @@
+# LibreChat registration of the MediaWiki MCP server.
+#
+# Each user connects once from the MCP menu: LibreChat opens the wiki's
+# sign-in (Keycloak) and consent page, and from then on every tool call runs
+# as that wiki user, within the access tiers.
+#
+# The URL is the add-on's MEDIAWIKI_MCP_PUBLIC_URL and differs per
+# deployment, so the placeholder below has to be replaced through the
+# customer overlay, together with the matching allowedDomains entry -- see
+# the add-on README, "LibreChat". example.com is reserved and never resolves
+# to a real server, so the placeholder cannot leak a sign-in anywhere.
 mcpServers:
   MediaWiki:
     title: 'MediaWiki'
-    description: 'OIDC-secured knowledge base with access tiers via MediaWiki.'
+    description: 'Knowledge base: read, search and edit wiki pages as yourself, within your access tiers.'
     type: streamable-http
-    url: http://mediawiki-mcp:8000/mcp
-    headers:
-      Authorization: "Bearer {{LIBRECHAT_OPENID_ACCESS_TOKEN}}"
-    # Lazy init: mediawiki-mcp validates a real user Bearer token. Without
-    # startup: false, LibreChat connects at process start with the
-    # unsubstituted placeholder, gets a 401, and falls back to MCP OAuth
-    # discovery -- which then times out instead of failing fast.
+    url: https://wiki.example.com/mcp
+    # OAuth sign-in per user; nothing to connect at LibreChat start.
+    requiresOAuth: true
     startup: false
 
 mcpSettings:
   allowedDomains:
-    - "http://mediawiki-mcp:8000"
+    - "wiki.example.com"

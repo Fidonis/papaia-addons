@@ -9,7 +9,8 @@
 #   3. empty database -> install.php (schema + local admin)
 #      otherwise, once per container -> update.php (schema after an upgrade)
 #   4. local admin: groups, password from MW_ADMIN_PASSWORD
-#   5. MCP bot account + bot password from WIKI_BOT_PASSWORD
+#   5. OAuth: token signing keys + the MCP server's consumer, whose
+#      credentials go to the volume the MCP container reads
 #
 # Every value comes from the add-on .env, so nothing has to be copied by hand
 # and a restart re-applies a rotated secret.
@@ -26,13 +27,13 @@ log() { printf 'papaia-mediawiki: %s\n' "$*" >&2; }
 die() { log "ERROR: $*"; exit 1; }
 
 for var in MW_SERVER MW_SECRET_KEY MW_UPGRADE_KEY MW_DB_PASSWORD MW_ADMIN_PASSWORD \
-           OIDC_ISSUER KC_MEDIAWIKI_CLIENT_SECRET WIKI_BOT_PASSWORD; do
+           OIDC_ISSUER KC_MEDIAWIKI_CLIENT_SECRET; do
     [[ -n "${!var:-}" ]] || die "$var is not set (see .env.example)"
 done
 
 MW_ADMIN_USER="${MW_ADMIN_USER:-Admin}"
-MW_BOT_USER="${MW_BOT_USER:-MCPBot}"
-MW_BOT_APPID="${MW_BOT_APPID:-mcp}"
+OAUTH_DIR=/var/lib/papaia-mediawiki-oauth
+MCP_DIR=/var/lib/papaia-mediawiki-mcp
 MW_DB_HOST="${MW_DB_HOST:-mediawiki-db}"
 MW_DB_NAME="${MW_DB_NAME:-mediawiki}"
 MW_DB_USER="${MW_DB_USER:-mediawiki}"
@@ -120,17 +121,31 @@ fi
 MW_ENABLE_LOCAL_LOGIN=true php maintenance/run.php createAndPromote --force --sysop --bureaucrat \
     --custom-groups="$ALL_TIERS_GROUP" "$MW_ADMIN_USER" "$MW_ADMIN_PASSWORD" >&2
 
-# ── 5. MCP bot account and bot password ───────────────────────────────────
-# The account's own password is random and never used: the MCP server logs
-# in with the bot password, whose grants cap what the session may do.
-# all-tiers lets it read every access tier -- the MCP server, not the wiki,
-# decides which caller sees what (see README, "Access tiers").
-MW_ENABLE_LOCAL_LOGIN=true php maintenance/run.php createAndPromote --force --bot --sysop \
-    --custom-groups="$ALL_TIERS_GROUP" "$MW_BOT_USER" "$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')" >&2
-php /usr/local/share/papaia-mediawiki/EnsureBotPassword.php \
-    --user="$MW_BOT_USER" --appid="$MW_BOT_APPID" \
-    --grants=basic,highvolume,editpage,editprotected,createeditmovepage,delete \
-    --password-env=WIKI_BOT_PASSWORD >&2
+# ── 5. OAuth ──────────────────────────────────────────────────────────────
+# The key pair signs the OAuth 2.0 access tokens. It is created once and
+# kept on a volume: a new pair would invalidate every token handed out.
+if [[ ! -s "$OAUTH_DIR/oauth2.key" ]]; then
+    log "generating the OAuth 2.0 signing key pair"
+    openssl genrsa -out "$OAUTH_DIR/oauth2.key.tmp" 2048 2>/dev/null
+    openssl rsa -in "$OAUTH_DIR/oauth2.key.tmp" -pubout -out "$OAUTH_DIR/oauth2.pub" 2>/dev/null
+    mv "$OAUTH_DIR/oauth2.key.tmp" "$OAUTH_DIR/oauth2.key"
+fi
+chown www-data:www-data "$OAUTH_DIR/oauth2.key" "$OAUTH_DIR/oauth2.pub"
+chmod 0600 "$OAUTH_DIR/oauth2.key"
+
+# The consumer the MCP server signs users in through. Its callback is fixed
+# by the MCP server's public URL; a changed URL gets a new consumer.
+if [[ -n "${MEDIAWIKI_MCP_PUBLIC_URL:-}" ]]; then
+    php /usr/local/share/papaia-mediawiki/EnsureOAuthConsumer.php \
+        --user="$MW_ADMIN_USER" \
+        --callback="${MEDIAWIKI_MCP_PUBLIC_URL%/}/oauth/callback" \
+        --grants=basic,highvolume,editpage,createeditmovepage,uploadfile,uploadeditmovefile,delete,protect \
+        --email="${MW_EMAIL_FROM:-wiki@localhost}" \
+        --output="$MCP_DIR/oauth.env" >&2
+else
+    log "MEDIAWIKI_MCP_PUBLIC_URL is empty: no MCP sign-in"
+    rm -f "$MCP_DIR/oauth.env"
+fi
 
 chown -R www-data:www-data "$MW_INSTALL_PATH/images"
 

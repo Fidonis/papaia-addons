@@ -230,8 +230,10 @@ foreach ( $papaiaTiers as $papaiaNsId => $papaiaTier ) {
 	foreach ( $papaiaAllowed as $papaiaGroup ) {
 		$wgGroupPermissions[$papaiaGroup][$papaiaEditRight] = true;
 	}
-	# Bot-password sessions only keep rights some grant covers; without this
-	# the MCP bot could read a tier but not edit it.
+	# Bot-password and OAuth sessions only keep rights some grant covers;
+	# without this a member signed in through an API client could read a
+	# tier but not edit it. The right itself stays limited to the groups.
+	$wgGrantPermissions['editpage'][$papaiaEditRight] = true;
 	$wgGrantPermissions['editprotected'][$papaiaEditRight] = true;
 }
 
@@ -280,13 +282,28 @@ function papaiaTierOf( ?int $ns ): ?int {
 # cache, where every later reader gets it. A page may therefore transclude
 # from a tier only if it lives in that same tier. The rule depends on the
 # two titles alone, never on the viewer, so cached output stays correct.
+#
+# The context title alone is not enough: action=parse, expandtemplates,
+# Special:ExpandTemplates and the VisualEditor/REST transforms accept any
+# title as context, so a reader outside the tier could pass a tier title and
+# transclude from it. Such a request is also refused for a logged-in viewer
+# who cannot read the tier. Anonymous and maintenance contexts (job runner,
+# CLI) keep the title rule only: they cannot read the wiki at all, and a
+# render from there may land in the parser cache, where a viewer-based skip
+# would leave tier members with an incomplete page.
 $wgHooks['BeforeParserFetchTemplateRevisionRecord'][] = static function (
 	$contextTitle, $title, &$skip, &$revRecord
 ) {
 	$sourceTier = papaiaTierOf( $title->getNamespace() );
-	if ( $sourceTier !== null
-		&& papaiaTierOf( $contextTitle ? $contextTitle->getNamespace() : null ) !== $sourceTier
-	) {
+	if ( $sourceTier === null ) {
+		return;
+	}
+	if ( papaiaTierOf( $contextTitle ? $contextTitle->getNamespace() : null ) !== $sourceTier ) {
+		$skip = true;
+		return;
+	}
+	$viewer = RequestContext::getMain()->getUser();
+	if ( $viewer->isRegistered() && in_array( $sourceTier, papaiaHiddenNamespaces( $viewer ), true ) ) {
 		$skip = true;
 	}
 };
@@ -359,8 +376,43 @@ $wgHooks['APIQueryAfterExecute'][] = static function ( $module ) {
 	}
 };
 
-# Action API export (action=query&export) and full-text search in a hidden
-# namespace: refuse outright rather than filter.
+# Action API prop modules (prop=revisions, info, ...) attach their data to the
+# page entries under query.pages. MediaWiki withholds the content of a page
+# the caller cannot read, but not revision metadata such as edit summaries.
+# Strip a hidden page down to the fields that only name it.
+$wgHooks['APIAfterExecute'][] = static function ( $module ) {
+	if ( $module->getModuleName() !== 'query' ) {
+		return;
+	}
+	$hidden = papaiaHiddenNamespaces( $module->getUser() );
+	if ( !$hidden ) {
+		return;
+	}
+	$result = $module->getResult();
+	$pages = $result->getResultData( [ 'query', 'pages' ] );
+	if ( !is_array( $pages ) ) {
+		return;
+	}
+	$changed = false;
+	foreach ( $pages as $key => $page ) {
+		if ( !is_array( $page ) || !isset( $page['ns'] ) || !in_array( (int)$page['ns'], $hidden, true ) ) {
+			continue;
+		}
+		$kept = array_intersect_key( $page, array_flip( [ 'pageid', 'ns', 'title', 'missing', 'invalid' ] ) );
+		if ( $kept !== $page ) {
+			$pages[$key] = $kept;
+			$changed = true;
+		}
+	}
+	if ( $changed ) {
+		$result->addValue( [ 'query' ], 'pages', $pages, ApiResult::OVERRIDE | ApiResult::NO_SIZE_CHECK );
+	}
+};
+
+# Action API export (action=query&export): refuse outright. Full-text search:
+# drop hidden namespaces from the requested ones, so a client that searches
+# every content namespace (as MCP clients do) still gets the visible
+# matches; refuse only when nothing visible is left.
 $wgHooks['ApiCheckCanExecute'][] = static function ( $module, $user, &$message ) {
 	$hidden = papaiaHiddenNamespaces( $user );
 	if ( !$hidden || $module->getModuleName() !== 'query' ) {
@@ -372,11 +424,16 @@ $wgHooks['ApiCheckCanExecute'][] = static function ( $module, $user, &$message )
 		return false;
 	}
 	foreach ( [ 'srnamespace', 'gsrnamespace' ] as $param ) {
+		if ( !$request->getCheck( $param ) ) {
+			continue;
+		}
 		$requested = array_map( 'intval', explode( '|', (string)$request->getVal( $param, '' ) ) );
-		if ( $request->getCheck( $param ) && array_intersect( $requested, $hidden ) ) {
+		$visible = array_values( array_diff( $requested, $hidden ) );
+		if ( !$visible ) {
 			$message = ApiMessage::create( 'apierror-permissiondenied-generic', 'permissiondenied' );
 			return false;
 		}
+		$request->setVal( $param, implode( '|', $visible ) );
 	}
 	return true;
 };

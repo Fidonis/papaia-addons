@@ -21,7 +21,7 @@ mcpServers:
     startup: false
 
 mcpSettings:
-  # host.docker.internal resolves to a private address, which LibreChat
-  # refuses for MCP servers unless the domain is listed here.
+  # The core lists allowedDomains, so LibreChat refuses every MCP server
+  # whose domain is not listed here ("Domain ... is not allowed").
   allowedDomains:
     - "host.docker.internal"

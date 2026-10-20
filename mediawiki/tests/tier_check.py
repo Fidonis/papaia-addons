@@ -198,6 +198,10 @@ def main() -> int:
     # ── Seed, as the tier member ───────────────────────────────────────────
     member = Client(args.base)
     member.login(args.member, args.password)
+    # A visible entry older than the tier entries, so filtered lists have
+    # entries removed from their middle.
+    member.edit("Early public page", "Early.", "early public")
+    member.upload("Early-public.png", png("public"), "early public file", "Public file.")
     up = member.upload(UPLOAD_NAME, png(m_bytes), f"upload {m_upload}", f"Description {w_file} {m_filedesc}")
     stored = up.get("upload", {}).get("filename")
     checks.ok("upload named Tier:name lands as Tier-name", stored == FILE, f"({up})")
@@ -290,6 +294,11 @@ def main() -> int:
         action="query", list="search", srsearch=w_page, srnamespace="0|6|3002", srwhat="text"), markers)
     checks.no_leak("list=recentchanges", api(
         action="query", list="recentchanges", rcprop="title|comment", rclimit="500"), markers)
+    for module, prefix in (("recentchanges", "rc"), ("logevents", "le"), ("allimages", "ai")):
+        _, _, data = out.api({"action": "query", "list": module, f"{prefix}limit": "500"})
+        entries = data.get("query", {}).get(module)
+        checks.ok(f"list={module} stays a JSON list after filtering", isinstance(entries, list) and len(entries) > 0,
+                  f"({type(entries).__name__})")
     checks.no_leak("list=allpages", api(action="query", list="allpages", apnamespace="3002"), [])
     checks.no_leak("list=logevents", api(
         action="query", list="logevents", leprop="title|comment", lelimit="500"), markers)

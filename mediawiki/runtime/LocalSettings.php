@@ -505,13 +505,21 @@ $wgHooks['APIQueryAfterExecute'][] = static function ( $module ) {
 	if ( !is_array( $data ) ) {
 		return;
 	}
+	# Rebuilt rather than unset in place: a list with gaps in its keys would
+	# be returned as a JSON object instead of an array (formatversion=2),
+	# which breaks clients iterating over it.
 	$changed = false;
+	$kept = [];
 	foreach ( $data as $key => $item ) {
-		if ( is_int( $key ) && is_array( $item ) && papaiaIsHiddenEntry( $user, $item ) ) {
-			unset( $data[$key] );
+		if ( !is_int( $key ) ) {
+			$kept[$key] = $item;
+		} elseif ( is_array( $item ) && papaiaIsHiddenEntry( $user, $item ) ) {
 			$changed = true;
+		} else {
+			$kept[] = $item;
 		}
 	}
+	$data = $kept;
 	if ( $changed ) {
 		$result->addValue( [ 'query' ], $module->getModuleName(), $data,
 			ApiResult::OVERRIDE | ApiResult::NO_SIZE_CHECK );

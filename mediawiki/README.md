@@ -469,13 +469,13 @@ MEDIAWIKI_MCP_ALLOWED_REDIRECTS=https://chat.example.org/api/mcp/MediaWiki/oauth
 
 Requirements, and the symptom when one is missing:
 
-| Requirement | Symptom in LibreChat (log) |
+| Requirement | Symptom (LibreChat log, `logs/error-*.log`) |
 |---|---|
 | The LibreChat `url` is `<MW_SERVER>/mcp` | `No OAuth metadata discovered from https://...`, then *"The MCP server must be authenticated"* |
 | The URL is https, and LibreChat trusts its certificate (papaia local CA via `NODE_EXTRA_CA_CERTS`, or a public CA) | connection or certificate errors on `/.well-known/oauth-protected-resource` |
 | The LibreChat container reaches the URL -- not `localhost`, which is the container itself | `ECONNREFUSED`; the MCP container logs a warning for a `localhost` URL at start |
-| The host of the URL is in `mcpSettings.allowedDomains` | the server is refused before any request |
-| LibreChat's callback is allowed | the sign-in ends on an error page of the wiki's MCP server naming the redirect URI |
+| The host of the URL is in `mcpSettings.allowedDomains` | `MCPDomainNotAllowedError: Domain "https://..." is not allowed`; the server is reported unreachable |
+| LibreChat's callback is allowed | `[MCPOAuth] Failed to initiate OAuth flow` with `a redirect_uri is not permitted`; connecting fails before any sign-in page opens |
 
 Each user then connects once: in the chat, select the MediaWiki MCP server,
 follow the sign-in link (wiki login via Keycloak, then the consent page), and

@@ -168,11 +168,20 @@ $wgOpenIDConnect_MigrateUsersByEmail = papaiaEnvBool( 'MW_OIDC_MIGRATE_BY_EMAIL'
 ## ── Access tiers ──────────────────────────────────────────────────────────
 # MW_NAMESPACES          Name:id[,Name:id...]   id even, >= 3000
 # MW_NAMESPACE_READ_GROUPS Name=group[,group...][;Name=...]
-# MW_SYSOP_GROUPS        groups whose members become sysop + bureaucrat
+# MW_SYSOP_GROUPS        groups whose members become sysop + bureaucrat +
+#                        interface-admin, and thereby able to reach every
+#                        tier (see README, "Administrators")
 #
 # Group names are the values of the groups claim; each one becomes a wiki
 # group of the same name, synced on every login. The local admin is a member
 # of PAPAIA_ALL_TIERS_GROUP and passes every tier.
+#
+# Uploaded files all live in the File namespace, which is not a tier. A file
+# belongs to a tier through its name instead: File:Management-Plan.pdf is in
+# the Management tier. MediaWiki turns a colon in an uploaded file name into a
+# hyphen, so an upload named "Management:Plan.pdf" lands there as well. The
+# prefix is matched case-insensitively, with stray underscores and either
+# separator, so File:MANAGEMENT_-Plan.pdf is in the tier too.
 const PAPAIA_ALL_TIERS_GROUP = 'all-tiers';
 
 /** @var array<int,array{name:string,groups:string[]}> $papaiaTiers keyed by namespace id */
@@ -206,6 +215,16 @@ if ( $papaiaReadGroups ) {
 	throw new RuntimeException( 'papaia-mediawiki: MW_NAMESPACE_READ_GROUPS names namespaces missing from MW_NAMESPACES: '
 		. implode( ', ', array_keys( $papaiaReadGroups ) ) );
 }
+
+# File name prefix -> tier. Tier names are [A-Za-z][A-Za-z0-9_]*, so they are
+# safe both in this pattern and in the SQL built by papaiaHiddenConds().
+$papaiaFileTiers = [];
+foreach ( $papaiaTiers as $papaiaNsId => $papaiaTier ) {
+	$papaiaFileTiers[strtolower( $papaiaTier['name'] )] = $papaiaNsId;
+}
+$papaiaFileTierRegex = $papaiaFileTiers
+	? '/^(' . implode( '|', array_keys( $papaiaFileTiers ) ) . ')_*[-:]/i'
+	: null;
 
 wfLoadExtension( 'Lockdown' );
 
@@ -266,15 +285,66 @@ function papaiaHiddenNamespaces( $user ): array {
 	return $cache[$key];
 }
 
-/** The tier (subject namespace id) a namespace belongs to, or null. */
-function papaiaTierOf( ?int $ns ): ?int {
-	global $papaiaTiers;
-	if ( $ns === null ) {
-		return null;
-	}
+/**
+ * The tier (subject namespace id) a title belongs to, or null: a page in a
+ * tier namespace, or a file (File:, File talk:, Media:) whose name carries a
+ * tier prefix.
+ */
+function papaiaTierOfTitle( int $ns, string $dbkey ): ?int {
+	global $papaiaTiers, $papaiaFileTiers, $papaiaFileTierRegex;
 	$subject = $ns - ( $ns % 2 );
-	return isset( $papaiaTiers[$subject] ) ? $subject : null;
+	if ( isset( $papaiaTiers[$subject] ) ) {
+		return $subject;
+	}
+	if ( ( $subject === NS_FILE || $ns === NS_MEDIA ) && $papaiaFileTierRegex !== null
+		&& preg_match( $papaiaFileTierRegex, $dbkey, $m )
+	) {
+		return $papaiaFileTiers[strtolower( $m[1] )];
+	}
+	return null;
 }
+
+/** papaiaTierOfTitle() for a LinkTarget or PageReference; null for none. */
+function papaiaTierOf( $title ): ?int {
+	return $title ? papaiaTierOfTitle( $title->getNamespace(), $title->getDBkey() ) : null;
+}
+
+/** Whether the tier of the given title is hidden from the user. */
+function papaiaIsHidden( $user, int $ns, string $dbkey ): bool {
+	$tier = papaiaTierOfTitle( $ns, $dbkey );
+	return $tier !== null && in_array( $tier, papaiaHiddenNamespaces( $user ), true );
+}
+
+/**
+ * papaiaIsHidden() for an API result entry, which carries "ns" and the
+ * prefixed "title". The namespace prefix is cut at the first colon, which is
+ * the File: prefix for the titles that need the name at all.
+ */
+function papaiaIsHiddenEntry( $user, array $entry ): bool {
+	if ( !isset( $entry['ns'] ) ) {
+		return false;
+	}
+	$title = (string)( $entry['title'] ?? '' );
+	$name = str_replace( ' ', '_', substr( $title, strpos( $title, ':' ) + 1 ) );
+	return papaiaIsHidden( $user, (int)$entry['ns'], $name );
+}
+
+# Pages in a tier namespace are guarded by Lockdown. Files carry their tier in
+# the name instead, so every action on them -- view, raw, edit, upload,
+# re-upload, move to or from, delete -- is checked here, and img_auth.php,
+# thumbnails and the REST file endpoints refuse the file itself through the
+# same check.
+$wgHooks['getUserPermissionsErrors'][] = static function ( $title, $user, $action, &$result ) {
+	$ns = $title->getNamespace();
+	if ( $ns !== NS_FILE && $ns !== NS_FILE_TALK && $ns !== NS_MEDIA ) {
+		return true;
+	}
+	if ( !papaiaIsHidden( $user, $ns, $title->getDBkey() ) ) {
+		return true;
+	}
+	$result = [ 'badaccess-group0' ];
+	return false;
+};
 
 # Transclusion ({{:Internal:Page}}, msgnw:, raw:, expandtemplates, parse
 # with text) bypasses Lockdown: the parser fetches the source without a
@@ -291,25 +361,58 @@ function papaiaTierOf( ?int $ns ): ?int {
 # CLI) keep the title rule only: they cannot read the wiki at all, and a
 # render from there may land in the parser cache, where a viewer-based skip
 # would leave tier members with an incomplete page.
+function papaiaSkipTierSource( $contextTitle, $sourceTitle ): bool {
+	$sourceTier = papaiaTierOf( $sourceTitle );
+	if ( $sourceTier === null ) {
+		return false;
+	}
+	if ( papaiaTierOf( $contextTitle ) !== $sourceTier ) {
+		return true;
+	}
+	$viewer = RequestContext::getMain()->getUser();
+	return $viewer->isRegistered() && in_array( $sourceTier, papaiaHiddenNamespaces( $viewer ), true );
+}
+
 $wgHooks['BeforeParserFetchTemplateRevisionRecord'][] = static function (
 	$contextTitle, $title, &$skip, &$revRecord
 ) {
-	$sourceTier = papaiaTierOf( $title->getNamespace() );
-	if ( $sourceTier === null ) {
-		return;
-	}
-	if ( papaiaTierOf( $contextTitle ? $contextTitle->getNamespace() : null ) !== $sourceTier ) {
+	if ( papaiaSkipTierSource( $contextTitle, $title ) ) {
 		$skip = true;
-		return;
 	}
-	$viewer = RequestContext::getMain()->getUser();
-	if ( $viewer->isRegistered() && in_array( $sourceTier, papaiaHiddenNamespaces( $viewer ), true ) ) {
-		$skip = true;
+};
+
+# The same rule for embedded files ([[File:Management-Plan.pdf]], galleries,
+# Media: links): outside the file's tier it renders as a missing file, so no
+# page or cache entry outside the tier carries its URL, size or metadata.
+$wgHooks['BeforeParserFetchFileAndTitle'][] = static function ( $parser, $nt, &$options, &$descQuery ) {
+	if ( papaiaSkipTierSource( $parser->getPage(), $nt ) ) {
+		$options['broken'] = true;
 	}
 };
 
 function papaiaNsCondition( string $column, array $hidden ): string {
 	return $column . ' NOT IN (' . implode( ',', array_map( 'intval', $hidden ) ) . ')';
+}
+
+/**
+ * SQL conditions excluding the given hidden tiers: their namespaces, and
+ * files whose name carries their prefix (matched as papaiaTierOfTitle does).
+ * @return string[]
+ */
+function papaiaHiddenConds( string $nsColumn, string $titleColumn, array $hidden ): array {
+	global $papaiaTiers;
+	$conds = [ papaiaNsCondition( $nsColumn, $hidden ) ];
+	$names = [];
+	foreach ( $hidden as $nsId ) {
+		if ( isset( $papaiaTiers[$nsId] ) ) {
+			$names[] = strtolower( $papaiaTiers[$nsId]['name'] );
+		}
+	}
+	if ( $names ) {
+		$conds[] = "NOT ($nsColumn IN (" . NS_FILE . ',' . NS_FILE_TALK . ')'
+			. " AND LOWER(CONVERT($titleColumn USING utf8mb4)) REGEXP '^(" . implode( '|', $names ) . ")_*[-:]')";
+	}
+	return $conds;
 }
 
 # Lockdown guards the pages themselves. Listings that show edit summaries or
@@ -322,7 +425,7 @@ $wgHooks['ChangesListSpecialPageQuery'][] = static function (
 ) {
 	$hidden = papaiaHiddenNamespaces( RequestContext::getMain()->getUser() );
 	if ( $hidden ) {
-		$conds[] = papaiaNsCondition( 'rc_namespace', $hidden );
+		$conds = array_merge( $conds, papaiaHiddenConds( 'rc_namespace', 'rc_title', $hidden ) );
 	}
 };
 
@@ -332,7 +435,7 @@ $wgHooks['SpecialNewpagesConditions'][] = static function (
 ) {
 	$hidden = papaiaHiddenNamespaces( RequestContext::getMain()->getUser() );
 	if ( $hidden ) {
-		$conds[] = papaiaNsCondition( 'rc_namespace', $hidden );
+		$conds = array_merge( $conds, papaiaHiddenConds( 'rc_namespace', 'rc_title', $hidden ) );
 	}
 };
 
@@ -340,19 +443,60 @@ $wgHooks['SpecialNewpagesConditions'][] = static function (
 $wgHooks['ContribsPager::getQueryInfo'][] = static function ( $pager, &$queryInfo ) {
 	$hidden = papaiaHiddenNamespaces( $pager->getUser() );
 	if ( $hidden ) {
-		$queryInfo['conds'][] = papaiaNsCondition( 'page_namespace', $hidden );
+		$queryInfo['conds'] = array_merge( $queryInfo['conds'],
+			papaiaHiddenConds( 'page_namespace', 'page_title', $hidden ) );
 	}
 };
 
-# Action API query modules (allpages, recentchanges, logevents,
+# Special:Log: upload, move and delete entries carry the summary a user gave.
+$wgHooks['SpecialLogAddLogSearchRelations'][] = static function ( $type, $request, &$qc ) {
+	$hidden = papaiaHiddenNamespaces( RequestContext::getMain()->getUser() );
+	if ( $hidden ) {
+		$qc = array_merge( $qc, papaiaHiddenConds( 'log_namespace', 'log_title', $hidden ) );
+	}
+};
+
+# Special:Search: drop hits from hidden tiers. Tier namespaces never reach
+# the result (Lockdown removes them from the search); files of a hidden tier
+# share the File namespace with everything else and are dropped here.
+$wgHooks['ShowSearchHit'][] = static function (
+	$searchPage, $result, $terms, &$link, &$redirect, &$section, &$extract,
+	&$score, &$size, &$date, &$related, &$html
+) {
+	$title = $result->getTitle();
+	if ( $title && papaiaIsHidden( $searchPage->getUser(), $title->getNamespace(), $title->getDBkey() ) ) {
+		$html = '';
+		return false;
+	}
+	return true;
+};
+
+# File listings without a query hook: description, uploader, size and
+# thumbnail of every file at once. Refused to a user with a hidden tier
+# rather than shown with tier files; the thumbnails would be refused by
+# img_auth.php anyway, the upload summaries would not.
+$wgHooks['SpecialPageBeforeExecute'][] = static function ( $special, $subPage ) {
+	static $fileListings = [
+		'Listfiles', 'Newimages', 'MIMEsearch', 'ListDuplicatedFiles',
+		'FileDuplicateSearch', 'Unusedimages', 'Uncategorizedimages',
+	];
+	if ( in_array( $special->getName(), $fileListings, true )
+		&& papaiaHiddenNamespaces( $special->getUser() )
+	) {
+		throw new PermissionsError( null, [ [ 'badaccess-group0' ] ] );
+	}
+	return true;
+};
+
+# Action API query modules (allpages, allimages, recentchanges, logevents,
 # usercontribs, allrevisions, search, watchlist, ...): drop result entries
-# from hidden namespaces after the module ran. Filtering the result rather
-# than the SQL covers every module that reports an "ns" field, including
-# those that never offer a query hook -- at the cost of short pages, which
+# from hidden tiers after the module ran. Filtering the result rather than
+# the SQL covers every module that reports an "ns" field, including those
+# that never offer a query hook -- at the cost of short pages, which
 # continuation handles.
 $wgHooks['APIQueryAfterExecute'][] = static function ( $module ) {
-	$hidden = papaiaHiddenNamespaces( $module->getUser() );
-	if ( !$hidden ) {
+	$user = $module->getUser();
+	if ( !papaiaHiddenNamespaces( $user ) ) {
 		return;
 	}
 	$path = [ 'query', $module->getModuleName() ];
@@ -363,9 +507,7 @@ $wgHooks['APIQueryAfterExecute'][] = static function ( $module ) {
 	}
 	$changed = false;
 	foreach ( $data as $key => $item ) {
-		if ( is_int( $key ) && is_array( $item ) && isset( $item['ns'] )
-			&& in_array( (int)$item['ns'], $hidden, true )
-		) {
+		if ( is_int( $key ) && is_array( $item ) && papaiaIsHiddenEntry( $user, $item ) ) {
 			unset( $data[$key] );
 			$changed = true;
 		}
@@ -384,8 +526,8 @@ $wgHooks['APIAfterExecute'][] = static function ( $module ) {
 	if ( $module->getModuleName() !== 'query' ) {
 		return;
 	}
-	$hidden = papaiaHiddenNamespaces( $module->getUser() );
-	if ( !$hidden ) {
+	$user = $module->getUser();
+	if ( !papaiaHiddenNamespaces( $user ) ) {
 		return;
 	}
 	$result = $module->getResult();
@@ -395,7 +537,7 @@ $wgHooks['APIAfterExecute'][] = static function ( $module ) {
 	}
 	$changed = false;
 	foreach ( $pages as $key => $page ) {
-		if ( !is_array( $page ) || !isset( $page['ns'] ) || !in_array( (int)$page['ns'], $hidden, true ) ) {
+		if ( !is_array( $page ) || !papaiaIsHiddenEntry( $user, $page ) ) {
 			continue;
 		}
 		$kept = array_intersect_key( $page, array_flip( [ 'pageid', 'ns', 'title', 'missing', 'invalid' ] ) );

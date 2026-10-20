@@ -4,7 +4,8 @@
 # by Fidonis GmbH · https://fidonis.de
 #
 # Brings the wiki to a usable state before Apache starts, idempotently:
-#   1. trust the bundled Keycloak CA for the OIDC calls (MW_OIDC_CA_FILE)
+#   1. trust the bundled Keycloak CA for the OIDC calls (MW_OIDC_CA_FILE),
+#      and provide the certificate of the published https port
 #   2. wait for the database
 #   3. empty database -> install.php (schema + local admin)
 #      otherwise, once per container -> update.php (schema after an upgrade)
@@ -14,6 +15,10 @@
 #
 # Every value comes from the add-on .env, so nothing has to be copied by hand
 # and a restart re-applies a rotated secret.
+#
+# Mounted read-only from the add-on's runtime/ directory together with
+# LocalSettings.php and EnsureOAuthConsumer.php, so an add-on update reaches
+# an existing install on the next start, without a new image.
 # ═══════════════════════════════════════════════════════════════════════════
 set -euo pipefail
 
@@ -21,7 +26,14 @@ export MW_INSTALL_PATH=/var/www/html
 cd "$MW_INSTALL_PATH"
 
 STATE_DIR=/var/lib/papaia-mediawiki
+RUNTIME_DIR=/usr/local/share/papaia-mediawiki
+TLS_DIR=/var/lib/papaia-mediawiki-tls
+LOCAL_CA_CRT=/certs/local-ca.crt
+LOCAL_CA_KEY=/certs/local-ca.key
 ALL_TIERS_GROUP=all-tiers
+# What the MCP server may do as the signed-in user; see README, "Through the
+# MCP server".
+DEFAULT_MCP_GRANTS=basic,editpage,createeditmovepage,uploadfile,uploadeditmovefile
 
 log() { printf 'papaia-mediawiki: %s\n' "$*" >&2; }
 die() { log "ERROR: $*"; exit 1; }
@@ -56,6 +68,65 @@ if [[ -n "${MW_OIDC_CA_FILE:-}" ]]; then
     fi
 fi
 
+# ── 1b. TLS for the published port ────────────────────────────────────────
+# MCP clients refuse a plain-http MCP server, and LibreChat reaches the wiki
+# under the same URL as the browser. The published port therefore speaks
+# https: with a certificate from the papaia local CA when one is mounted --
+# which LibreChat and the browsers that use the bundled Keycloak already
+# trust -- and a self-signed one otherwise. A reverse proxy in front of the
+# wiki uses plain-http port 80 on the add-on network and its own certificate.
+tls_host="${MW_SERVER#*://}"
+tls_host="${tls_host%%/*}"
+tls_host="${tls_host%:*}"
+tls_host="${tls_host#[}"
+tls_host="${tls_host%]}"
+if [[ "$tls_host" =~ ^[0-9.]+$ || "$tls_host" == *:* ]]; then
+    tls_san="IP:$tls_host"
+    tls_check=(-checkip "$tls_host")
+else
+    tls_san="DNS:$tls_host"
+    tls_check=(-checkhost "$tls_host")
+fi
+tls_ca=""
+if [[ -r "$LOCAL_CA_CRT" && -r "$LOCAL_CA_KEY" ]]; then
+    tls_ca="$LOCAL_CA_CRT"
+fi
+tls_current() {
+    # The existing certificate fits: right host, valid for another 30 days,
+    # and issued by the CA in use now (or self-signed when there is none).
+    [[ -s "$TLS_DIR/tls.crt" && -s "$TLS_DIR/tls.key" ]] || return 1
+    openssl x509 -in "$TLS_DIR/tls.crt" -noout -checkend 2592000 >/dev/null 2>&1 || return 1
+    openssl x509 -in "$TLS_DIR/tls.crt" -noout "${tls_check[@]}" 2>/dev/null | grep -q 'does match' || return 1
+    if [[ -n "$tls_ca" ]]; then
+        openssl verify -CAfile "$tls_ca" "$TLS_DIR/tls.crt" >/dev/null 2>&1
+    else
+        openssl verify -CAfile "$TLS_DIR/tls.crt" "$TLS_DIR/tls.crt" >/dev/null 2>&1
+    fi
+}
+if ! tls_current; then
+    tls_tmp="$(mktemp -d)"
+    printf 'subjectAltName=%s,DNS:localhost\nbasicConstraints=CA:FALSE\nkeyUsage=digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n' \
+        "$tls_san" > "$tls_tmp/ext"
+    openssl genrsa -out "$tls_tmp/tls.key" 2048 2>/dev/null
+    openssl req -new -key "$tls_tmp/tls.key" -subj "/CN=$tls_host/O=papAIa" -out "$tls_tmp/tls.csr" 2>/dev/null
+    # 825 days: the longest validity Apple platforms accept for a server
+    # certificate from a private CA. A restart within 30 days of expiry
+    # issues a new one.
+    if [[ -n "$tls_ca" ]]; then
+        log "issuing the TLS certificate for $tls_host from the papaia local CA"
+        openssl x509 -req -in "$tls_tmp/tls.csr" -CA "$LOCAL_CA_CRT" -CAkey "$LOCAL_CA_KEY" \
+            -CAcreateserial -CAserial "$tls_tmp/ca.srl" -days 825 -sha256 \
+            -extfile "$tls_tmp/ext" -out "$tls_tmp/tls.crt" 2>/dev/null
+    else
+        log "no papaia local CA mounted: issuing a self-signed TLS certificate for $tls_host"
+        openssl x509 -req -in "$tls_tmp/tls.csr" -signkey "$tls_tmp/tls.key" -days 825 -sha256 \
+            -extfile "$tls_tmp/ext" -out "$tls_tmp/tls.crt" 2>/dev/null
+    fi
+    install -m 0600 "$tls_tmp/tls.key" "$TLS_DIR/tls.key"
+    install -m 0644 "$tls_tmp/tls.crt" "$TLS_DIR/tls.crt"
+    rm -rf "$tls_tmp"
+fi
+
 # ── 2. Database ───────────────────────────────────────────────────────────
 db_query() {
     # Prints the number of rows the query returns; exit 1 if the server is
@@ -78,7 +149,7 @@ db_query 'SELECT 1' >/dev/null 2>&1 || die "database $MW_DB_NAME on $MW_DB_HOST 
 
 # ── 3. Schema ─────────────────────────────────────────────────────────────
 # install.php refuses to run while a LocalSettings.php exists, so the
-# image keeps its own copy aside and puts it in place after the install.
+# add-on's copy is kept aside (RUNTIME_DIR) and put in place after the install.
 rm -f "$MW_INSTALL_PATH/LocalSettings.php"
 if [[ "$(db_query "SHOW TABLES LIKE 'page'")" == "0" ]]; then
     log "empty database: installing MediaWiki"
@@ -100,7 +171,7 @@ fi
 # A copy, not a symlink: the base image's web root is sticky and world-
 # writable, and the kernel's protected_symlinks then stops Apache from
 # following a root-owned link -- the wiki would serve the installer.
-install -m 0644 /usr/local/share/papaia-mediawiki/LocalSettings.php "$MW_INSTALL_PATH/LocalSettings.php"
+install -m 0644 "$RUNTIME_DIR/LocalSettings.php" "$MW_INSTALL_PATH/LocalSettings.php"
 
 # update.php creates the extensions' tables on a fresh install and migrates
 # the schema after an image upgrade. A new image means a new container, so
@@ -133,19 +204,16 @@ fi
 chown www-data:www-data "$OAUTH_DIR/oauth2.key" "$OAUTH_DIR/oauth2.pub"
 chmod 0600 "$OAUTH_DIR/oauth2.key"
 
-# The consumer the MCP server signs users in through. Its callback is fixed
-# by the MCP server's public URL; a changed URL gets a new consumer.
-if [[ -n "${MEDIAWIKI_MCP_PUBLIC_URL:-}" ]]; then
-    php /usr/local/share/papaia-mediawiki/EnsureOAuthConsumer.php \
-        --user="$MW_ADMIN_USER" \
-        --callback="${MEDIAWIKI_MCP_PUBLIC_URL%/}/oauth/callback" \
-        --grants=basic,highvolume,editpage,createeditmovepage,uploadfile,uploadeditmovefile,delete,protect \
-        --email="${MW_EMAIL_FROM:-wiki@localhost}" \
-        --output="$MCP_DIR/oauth.env" >&2
-else
-    log "MEDIAWIKI_MCP_PUBLIC_URL is empty: no MCP sign-in"
-    rm -f "$MCP_DIR/oauth.env"
-fi
+# The consumer the MCP server signs users in through. Its callback and grants
+# are fixed when it is created; a changed public URL or grant list gets a new
+# consumer, and users consent once more.
+mcp_url="${MEDIAWIKI_MCP_PUBLIC_URL:-${MW_SERVER%/}/mcp}"
+php "$RUNTIME_DIR/EnsureOAuthConsumer.php" \
+    --user="$MW_ADMIN_USER" \
+    --callback="${mcp_url%/}/oauth/callback" \
+    --grants="${MEDIAWIKI_MCP_GRANTS:-$DEFAULT_MCP_GRANTS}" \
+    --email="${MW_EMAIL_FROM:-wiki@localhost}" \
+    --output="$MCP_DIR/oauth.env" >&2
 
 chown -R www-data:www-data "$MW_INSTALL_PATH/images"
 

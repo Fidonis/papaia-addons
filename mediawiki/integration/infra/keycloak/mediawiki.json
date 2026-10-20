@@ -4,7 +4,7 @@
   "description": "MediaWiki knowledge base — OIDC login via Keycloak",
   "enabled": true,
   "clientAuthenticatorType": "client-secret",
-  "rootUrl": "http://host.docker.internal:8020",
+  "rootUrl": "https://host.docker.internal:8020",
   "baseUrl": "/",
   "redirectUris": ["/index.php/Special:PluggableAuthLogin", "/index.php?title=Special:PluggableAuthLogin*"],
   "webOrigins": ["+"],

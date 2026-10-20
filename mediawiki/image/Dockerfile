@@ -11,6 +11,12 @@
 #
 # Extensions are pinned to a commit on their REL1_43 branch rather than the
 # branch head, so two builds of the same tag produce the same image.
+#
+# The image holds no add-on logic: LocalSettings.php, the entrypoint and the
+# OAuth bootstrap live in ../runtime and are mounted read-only by
+# docker-compose.yml, so an add-on update takes effect on the next start
+# without a new image. A change in this directory needs a new image tag:
+# <MediaWiki version>-<add-on version>, see papaia-app.yaml.
 # ═══════════════════════════════════════════════════════════════════════════
 FROM docker.io/library/composer:2.8.12 AS composer
 
@@ -75,14 +81,14 @@ RUN { \
 COPY mcp-proxy.conf /etc/apache2/conf-available/papaia-mediawiki-mcp.conf
 RUN a2enmod proxy proxy_http && a2enconf papaia-mediawiki-mcp
 
-# Copied into place by the entrypoint after install.php, which refuses to
-# run while a LocalSettings.php exists.
-COPY LocalSettings.php /usr/local/share/papaia-mediawiki/LocalSettings.php
-COPY EnsureOAuthConsumer.php /usr/local/share/papaia-mediawiki/EnsureOAuthConsumer.php
-COPY entrypoint.sh /usr/local/bin/papaia-mediawiki-entrypoint
-RUN chmod 0755 /usr/local/bin/papaia-mediawiki-entrypoint \
+# The published port speaks TLS (see runtime/entrypoint.sh, which provides
+# the certificate before Apache starts). Port 80 stays plain http for the
+# reverse proxy, the MCP server and the health check on the add-on network.
+COPY tls.conf /etc/apache2/sites-available/papaia-mediawiki-tls.conf
+RUN a2enmod ssl && a2ensite papaia-mediawiki-tls \
     && mkdir -p /etc/papaia-mediawiki/settings.d /var/lib/papaia-mediawiki \
-       /var/lib/papaia-mediawiki-oauth /var/lib/papaia-mediawiki-mcp
+       /var/lib/papaia-mediawiki-oauth /var/lib/papaia-mediawiki-mcp \
+       /var/lib/papaia-mediawiki-tls
 
-ENTRYPOINT ["/usr/local/bin/papaia-mediawiki-entrypoint"]
-CMD ["apache2-foreground"]
+LABEL org.opencontainers.image.source="https://github.com/Fidonis/papaia-addons" \
+      org.opencontainers.image.description="MediaWiki 1.43 with the extensions of the papaia mediawiki add-on"

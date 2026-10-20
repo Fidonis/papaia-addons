@@ -40,7 +40,7 @@ papaia-addons/
 └── README.md
 ```
 
-`qdrant-ingest` additionally ships `jobs.example.yaml`, a template for the ingest job definitions the operator web interface manages. `mediawiki` additionally ships `image/` (the Dockerfile, entrypoint and env-driven `LocalSettings.php` of its wiki image), `mcp/` (configuration and start script of the MCP server) and `settings.d/` (site-specific settings). `n8n` additionally ships `nginx.conf`, the config template of its logout shim (swappable via `N8N_PROXY_CONF`).
+`qdrant-ingest` additionally ships `jobs.example.yaml`, a template for the ingest job definitions the operator web interface manages. `mediawiki` additionally ships `image/` (the build context of its wiki image, published as `ghcr.io/fidonis/papaia-mediawiki:<MediaWiki version>-<add-on version>` by the `mediawiki-image` workflow; a change there needs a new add-on version), `runtime/` (the env-driven `LocalSettings.php`, entrypoint and OAuth bootstrap, mounted read-only into the wiki container), `mcp/` (configuration and start script of the MCP server), `settings.d/` (site-specific settings) and `tests/` (the access-tier leak checks, `tests/run.sh`). `n8n` additionally ships `nginx.conf`, the config template of its logout shim (swappable via `N8N_PROXY_CONF`).
 
 ---
 
@@ -117,6 +117,7 @@ shellcheck --severity=warning <script>
 - **Shell**: `shellcheck --severity=warning` must pass; `set -euo pipefail`, prefer `[[` over `[`, quote variables
 - **Line endings**: LF everywhere, enforced via `.gitattributes`
 - **Trailing whitespace**: forbidden
+- **PHP** (`mediawiki/runtime/`): tabs, following the MediaWiki coding conventions the code extends
 - Once a Python `src/` is introduced, `ruff check .` and the license-check workflow (see below) start applying
 
 ---

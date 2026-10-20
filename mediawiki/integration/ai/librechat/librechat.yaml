@@ -4,21 +4,24 @@
 # sign-in (Keycloak) and consent page, and from then on every tool call runs
 # as that wiki user, within the access tiers.
 #
-# The URL is the add-on's MEDIAWIKI_MCP_PUBLIC_URL and differs per
-# deployment, so the placeholder below has to be replaced through the
-# customer overlay, together with the matching allowedDomains entry -- see
-# the add-on README, "LibreChat". example.com is reserved and never resolves
-# to a real server, so the placeholder cannot leak a sign-in anywhere.
+# The URL is the add-on's MCP public URL, <MW_SERVER>/mcp. The value below
+# matches the add-on's default MW_SERVER (https://host.docker.internal:8020),
+# which LibreChat reaches through its host.docker.internal mapping and
+# trusts through the papaia local CA. With a different MW_SERVER, replace
+# url and the allowedDomains entry in the customer overlay -- see the add-on
+# README, "LibreChat".
 mcpServers:
   MediaWiki:
     title: 'MediaWiki'
     description: 'Knowledge base: read, search and edit wiki pages as yourself, within your access tiers.'
     type: streamable-http
-    url: https://wiki.example.com/mcp
+    url: https://host.docker.internal:8020/mcp
     # OAuth sign-in per user; nothing to connect at LibreChat start.
     requiresOAuth: true
     startup: false
 
 mcpSettings:
+  # host.docker.internal resolves to a private address, which LibreChat
+  # refuses for MCP servers unless the domain is listed here.
   allowedDomains:
-    - "wiki.example.com"
+    - "host.docker.internal"

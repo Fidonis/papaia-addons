@@ -27,4 +27,13 @@ host="${host%%/*}"
 host="${host%:*}"
 export MCP_ALLOWED_HOSTS="${MCP_ALLOWED_HOSTS:-$host}"
 
+# An MCP client in a container -- LibreChat among them -- resolves localhost
+# to itself and can neither fetch the sign-in metadata nor exchange tokens.
+case "$host" in
+    localhost|127.0.0.1|\[::1\]|*.localhost)
+        printf 'mediawiki-mcp: WARNING: the public URL %s points to %s; MCP clients running in a container (LibreChat) cannot reach it. Use the wiki'"'"'s https URL that the browser and LibreChat both reach (see the add-on README, "LibreChat").\n' \
+            "$MCP_PUBLIC_URL" "$host" >&2
+        ;;
+esac
+
 exec node /app/dist/index.js

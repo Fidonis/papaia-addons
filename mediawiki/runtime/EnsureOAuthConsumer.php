@@ -5,9 +5,11 @@
  *
  * The OAuth extension's own createOAuthConsumer.php only creates OAuth 1.0a
  * consumers, and a second run creates a second consumer. This script is
- * idempotent: the consumer's version is derived from its callback URL, so the
- * same callback finds the same consumer on every start, and a changed public
- * URL proposes a new one and disables the old ones.
+ * idempotent: the consumer's version is derived from its callback URL and its
+ * grants, so the same configuration finds the same consumer on every start.
+ * The extension never changes the callback or grants of an existing consumer,
+ * so a changed public URL or grant list proposes a new consumer and disables
+ * the old ones; users then consent once more.
  *
  * The consumer is confidential, uses the authorization-code and refresh-token
  * grants, and is approved right away. Its key and secret are written as a
@@ -51,7 +53,8 @@ class EnsureOAuthConsumer extends Maintenance {
 			$user->saveSettings();
 		}
 
-		$grants = array_values( array_filter( array_map( 'trim', explode( ',', $this->getOption( 'grants' ) ) ) ) );
+		$grants = array_values( array_unique( array_filter( array_map( 'trim', explode( ',', $this->getOption( 'grants' ) ) ) ) ) );
+		sort( $grants );
 		$invalid = array_diff( $grants, $services->getGrantsInfo()->getValidGrants() );
 		if ( $invalid ) {
 			$this->fatalError( 'Unknown grants: ' . implode( ', ', $invalid ) );
@@ -59,7 +62,7 @@ class EnsureOAuthConsumer extends Maintenance {
 
 		$callback = $this->getOption( 'callback' );
 		# A composer-style version, as the OAuth extension requires.
-		$version = '1.' . crc32( $callback );
+		$version = '1.' . crc32( $callback . '|' . implode( ',', $grants ) );
 		$context = RequestContext::getMain();
 		$context->setUser( $user );
 		$dbw = Utils::getCentralDB( DB_PRIMARY );
@@ -107,7 +110,7 @@ class EnsureOAuthConsumer extends Maintenance {
 				. Consumer::$stageNames[$stage] . "; MCP sign-in stays off until it is approved again\n" );
 		}
 
-		# Consumers left over from an earlier public URL.
+		# Consumers left over from an earlier public URL or grant list.
 		$stale = $dbw->newSelectQueryBuilder()
 			->select( 'oarc_consumer_key' )
 			->from( 'oauth_registered_consumer' )

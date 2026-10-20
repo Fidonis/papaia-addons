@@ -7,9 +7,9 @@
 # clients work in the wiki as the signed-in user, within the same tiers.
 #
 # All services run on the isolated ${PAPAIA_PROJECT:-papaia}-mediawiki-net
-# bridge. papaia-ctl generates a compose override that attaches nginx and
-# librechat to it (Seam 1). Only the wiki is published on a host port; it
-# also serves the MCP server under <MW_SERVER>/mcp.
+# bridge. papaia-ctl generates a compose override that attaches nginx to it
+# (Seam 1). Only the wiki is published on a host port, over https; it also
+# serves the MCP server under <MW_SERVER>/mcp.
 #
 # The ${...} values below are interpolated from the add-on .env, materialized
 # next to this file from the config bundle by `papaia-ctl addon start
@@ -23,21 +23,33 @@ services:
   #  MEDIAWIKI — wiki engine (Apache + PHP)
   #
   #  The image (image/Dockerfile) bakes in PluggableAuth, OpenIDConnect,
-  #  Lockdown and OAuth and ships an env-driven LocalSettings.php. Its
-  #  entrypoint installs or updates the schema, creates the local admin and
-  #  the MCP server's OAuth consumer before Apache starts -- see
-  #  image/entrypoint.sh. Apache proxies /mcp to the MCP server.
+  #  Lockdown and OAuth. The add-on logic -- the env-driven LocalSettings.php,
+  #  the entrypoint and the OAuth bootstrap -- is mounted read-only from
+  #  runtime/, so an add-on update reaches an existing install on the next
+  #  start without a new image. The entrypoint installs or updates the schema,
+  #  creates the local admin and the MCP server's OAuth consumer and provides
+  #  the TLS certificate before Apache starts. Apache proxies /mcp to the MCP
+  #  server.
+  #
+  #  The published port speaks https (certificate from the papaia local CA,
+  #  self-signed without one); port 80 serves the reverse proxy on the add-on
+  #  network.
   #
   #  extra_hosts lets the container reach Keycloak's browser-facing issuer
   #  URL on Linux hosts for the server-side half of the OIDC login.
   # ═══════════════════════════════════════════════════════════════════════════
   mediawiki:
-    image: ${MEDIAWIKI_IMAGE:-ghcr.io/fidonis/papaia-mediawiki:1.43.11}
-    # Used when the image is not available from the registry: compose builds
-    # it from the add-on's own Dockerfile instead.
+    # <MediaWiki version>-<add-on version>: a new add-on version that changes
+    # image/ publishes a new tag, so a cached image is never mistaken for it.
+    image: ${MEDIAWIKI_IMAGE:-ghcr.io/fidonis/papaia-mediawiki:1.43.11-1.0.0}
+    # Used when the image cannot be pulled: compose builds it from the
+    # add-on's own Dockerfile instead (needs internet, takes minutes).
     build:
       context: ./image
     restart: unless-stopped
+    entrypoint: ["/bin/bash", "/usr/local/share/papaia-mediawiki/entrypoint.sh"]
+    # Setting the entrypoint drops the image's default command.
+    command: ["apache2-foreground"]
     environment:
       MW_SITE_NAME:               ${MW_SITE_NAME:-Wiki}
       MW_SERVER:                  ${MW_SERVER}
@@ -53,6 +65,8 @@ services:
       MW_ADMIN_PASSWORD:          ${MW_ADMIN_PASSWORD}
       MW_ENABLE_LOCAL_LOGIN:      ${MW_ENABLE_LOCAL_LOGIN:-false}
       MW_AUTO_LOGIN:              ${MW_AUTO_LOGIN:-true}
+      MW_LOGIN_BUTTON_LABEL:      ${MW_LOGIN_BUTTON_LABEL:-Log in with Keycloak}
+      MW_DEBUG:                   ${MW_DEBUG:-false}
       # Access tiers — format in .env.example and README, "Access tiers".
       MW_NAMESPACES:              ${MW_NAMESPACES:-}
       MW_NAMESPACE_READ_GROUPS:   ${MW_NAMESPACE_READ_GROUPS:-}
@@ -71,7 +85,8 @@ services:
       KC_MEDIAWIKI_CLIENT_SECRET: ${KC_MEDIAWIKI_CLIENT_SECRET}
       MW_OIDC_MIGRATE_BY_EMAIL:   ${MW_OIDC_MIGRATE_BY_EMAIL:-false}
       # The MCP server's public URL; its OAuth callback is derived from it.
-      MEDIAWIKI_MCP_PUBLIC_URL:   ${MEDIAWIKI_MCP_PUBLIC_URL:-}
+      MEDIAWIKI_MCP_PUBLIC_URL:   ${MEDIAWIKI_MCP_PUBLIC_URL:-${MW_SERVER}/mcp}
+      MEDIAWIKI_MCP_GRANTS:       ${MEDIAWIKI_MCP_GRANTS:-basic,editpage,createeditmovepage,uploadfile,uploadeditmovefile}
       # CA cert for the OIDC calls — trusts the bundled Keycloak self-signed
       # cert. Cleared to "" via overrides/addons/ when auth_provider=external_oidc.
       MW_OIDC_CA_FILE:            /certs/local-ca.crt
@@ -81,12 +96,14 @@ services:
       mediawiki-db:
         condition: service_healthy
     ports:
-      - "${HOST_IP:-0.0.0.0}:${MEDIAWIKI_EXT_PORT:-8020}:80"
+      - "${HOST_IP:-0.0.0.0}:${MEDIAWIKI_EXT_PORT:-8020}:443"
     volumes:
+      - ./runtime:/usr/local/share/papaia-mediawiki:ro
       - ${PAPAIA_CONFIG_DIR}/certs:/certs:ro
       - mediawiki-images:/var/www/html/images
       - mediawiki-oauth:/var/lib/papaia-mediawiki-oauth
       - mediawiki-mcp-credentials:/var/lib/papaia-mediawiki-mcp
+      - mediawiki-tls:/var/lib/papaia-mediawiki-tls
       # Optional site-specific settings (*.php), loaded after the add-on's own.
       - ${MW_SETTINGS_DIR:-./settings.d}:/etc/papaia-mediawiki/settings.d:ro
     networks:
@@ -144,9 +161,10 @@ services:
   #  the MCP server holds no access rules of its own.
   #
   #  Reached through the wiki's origin (<MW_SERVER>/mcp, proxied by Apache),
-  #  so MEDIAWIKI_MCP_PUBLIC_URL must be that URL. The server requires https
-  #  for it unless the host is localhost. The consumer credentials are
-  #  written by the wiki's entrypoint to the shared credentials volume.
+  #  so its public URL is <MW_SERVER>/mcp unless MEDIAWIKI_MCP_PUBLIC_URL
+  #  says otherwise. The server requires https for it unless the host is
+  #  localhost. The consumer credentials are written by the wiki's
+  #  entrypoint to the shared credentials volume.
   # ═══════════════════════════════════════════════════════════════════════════
   mediawiki-mcp:
     image: ${MEDIAWIKI_MCP_IMAGE:-ghcr.io/professionalwiki/mediawiki-mcp-server:0.19.0}
@@ -155,7 +173,7 @@ services:
     environment:
       MW_SITE_NAME:                ${MW_SITE_NAME:-Wiki}
       MW_SERVER:                   ${MW_SERVER}
-      MCP_PUBLIC_URL:              ${MEDIAWIKI_MCP_PUBLIC_URL:-}
+      MCP_PUBLIC_URL:              ${MEDIAWIKI_MCP_PUBLIC_URL:-${MW_SERVER}/mcp}
       # Signs the tokens the MCP server issues and encrypts its session
       # store; rotating it signs every user out.
       MCP_OAUTH_JWT_SIGNING_KEY:   ${MEDIAWIKI_MCP_SIGNING_KEY}
@@ -210,3 +228,5 @@ volumes:
   # The MCP server's encrypted session store; keeps users signed in across
   # restarts.
   mediawiki-mcp-data:
+  # Key pair of the published https port.
+  mediawiki-tls:

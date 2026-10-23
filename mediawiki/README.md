@@ -186,13 +186,22 @@ MW_NAMESPACE_READ_GROUPS=Internal=internal,management,papaia-admin;Management=ma
 MW_SYSOP_GROUPS=papaia-admin
 ```
 
+The groups are Keycloak **realm roles**: the `groups` mapper of the
+`mediawiki` client puts a user's realm roles into the claim. `papaia-admin`
+comes with the realm; create every other group named here (for the defaults:
+`internal`, `management`) under Realm roles → Create role in the `papaia`
+realm, and assign it to the users or Keycloak groups that should read the
+tier.
+
 Every tier group named here becomes a wiki group of the same name.
 PluggableAuth syncs it from the token on every login, adding and removing
 membership, so tier membership is managed in Keycloak -- with the exception of
 the [administrators](#administrators). A user needs to log in again to pick up
 a new role -- and to lose one; see [Group changes](#group-changes). A
 namespace without groups, or groups for an unlisted namespace, stops the wiki
-from starting with a message naming the mistake.
+from starting with a message naming the mistake. `papaia-ctl addon start`
+then only reports the container as unhealthy; the message is in its log:
+`docker logs mediawiki-mediawiki-1`.
 
 ### Files
 
@@ -314,20 +323,28 @@ not continuously. Two consequences:
 
 ### Offboarding
 
-Removing a role in Keycloak alone does **not** end tier access on the MCP
-path for up to 30 days (see above). To cut it at once:
+Disabling a user in Keycloak stops new logins, but **not** the MCP
+connections the user already has: the MCP server refreshes its wiki token on
+its own for up to 30 days, and through it the user keeps reading and editing
+everything the wiki account may -- through LibreChat or an MCP client of their
+own. To cut a departing user off at once:
 
-1. **Keycloak:** remove the role (or disable the user).
-2. **Wiki:** remove the user from the tier group at `Special:UserRights`, as a
-   sysop. This takes effect on the next request, in the browser and through
+1. **Keycloak:** disable the user (or remove the role).
+2. **Wiki:** remove the user from the tier groups at `Special:UserRights`, as
+   a sysop. This takes effect on the next request, in the browser and through
    the MCP server alike.
+3. **MCP connections:** revoke them; this deletes the user's consent and the
+   tokens issued under it, as the user could at
+   `Special:OAuthManageMyGrants`:
 
-In that order, a login in between cannot add the group back. The user's MCP
-connection itself stays valid for the main namespace until it expires (30
-days without use) or the user revokes it at `Special:OAuthManageMyGrants`. An
-administrator can only end it by disabling the `papaia-mcp` consumer as a
-whole (`Special:OAuthManageConsumers`), which signs every user out of the MCP
-server until it is re-enabled.
+   ```bash
+   docker compose -p mediawiki -f addons/mediawiki/docker-compose.yml exec mediawiki \
+     php /usr/local/share/papaia-mediawiki/RevokeMcpAccess.php --user=<WikiUser>
+   ```
+
+In that order, a login in between cannot add the group back, and the user
+cannot sign in to the MCP server again. Disabling the `papaia-mcp` consumer at
+`Special:OAuthManageConsumers` ends every user's connections at once.
 
 ---
 

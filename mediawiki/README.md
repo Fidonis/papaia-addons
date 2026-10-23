@@ -138,8 +138,10 @@ The wiki container brings itself into a usable state before Apache starts
    `MEDIAWIKI_MCP_GRANTS`; later starts find it again. The OAuth extension
    never changes the callback or grants of an existing consumer, so a changed
    public URL or grant list creates a new consumer and disables the old one;
-   users then consent once more. The key and secret go to the
-   `mediawiki-mcp-credentials` volume, which the MCP server reads at start.
+   users then consent once more. Going back to an earlier configuration
+   re-enables its consumer, unless an administrator disabled it. The key and
+   secret go to the `mediawiki-mcp-credentials` volume; the MCP server reads
+   them at start and restarts by itself when they change.
 
 ---
 
@@ -226,7 +228,9 @@ Lockdown leaves open, per viewer:
 | `Special:Export`, API `export` | Restricted to sysops and the `all-tiers` group |
 | `Special:RecentChanges`, `Special:Watchlist`, their feeds, `Special:NewPages`, `Special:Contributions`, `Special:Log` | Entries from hidden tiers filtered out, including edit summaries and upload comments |
 | `Special:ListFiles`, `NewFiles`, `MIMESearch`, `ListDuplicatedFiles`, `FileDuplicateSearch`, `UnusedFiles`, `UncategorizedFiles` | Refused to users who cannot read every tier: these list all files with their upload comments and offer no filter |
-| Action API list modules (`recentchanges`, `allpages`, `allimages`, `logevents`, `usercontribs`, `allrevisions`, …) | Entries from hidden tiers removed from the result |
+| Action API list modules (`recentchanges`, `allpages`, `allimages`, `logevents`, `usercontribs`, `allrevisions`, `exturlusage`, `pageswithprop`, …) | Entries from hidden tiers removed from the result |
+| Listings built from the link tables: `Special:WantedPages`, `WantedCategories`, `WantedTemplates`, `WantedFiles`, `MostLinkedPages`, `MostLinkedCategories`, `MostLinkedTemplates`, `MostLinkedFiles`, `Categories`, `LinkSearch`, `PagesWithProp`, `ListRedirects`; API `alllinks`, `alltransclusions`, `allfileusages`, `allcategories`, `allredirects` and the matching `querypage` pages | Refused to users who cannot read every tier: their entries name what a page links to, so a tier page's red links, categories, templates, redirect targets and external URLs would show up |
+| Watchlist notification mails | Not sent for a tier page to a watcher outside its tier; anyone can watch any title, and members keep their watchlist after leaving a tier group |
 | Lookups by content: the duplicate warnings on upload (UI and API), `prop=duplicatefiles` | Tier files left out, so uploading a copy of a document does not reveal whether, or under which name, it exists in a hidden tier; this covers deleted tier files too |
 | Transclusion (`{{:Internal:Page}}`, `msgnw:`, `raw:`, `expandtemplates`, `parse`) and embedded tier files | Only allowed from a page in the same tier, so no rendered or cached page outside a tier carries its content; refused for a viewer outside the tier even when the parse names a tier page as context |
 
@@ -241,8 +245,7 @@ Lockdown is an access layer on top of a wiki built for openness, not a vault.
 These still reveal that a page or file exists, and its title:
 
 - red and blue link colours, `#ifexist`, `Special:WhatLinksHere`,
-  `Special:AllPages`, category listings, `Special:WantedFiles`, title
-  suggestions while typing;
+  `Special:AllPages`, category pages, title suggestions while typing;
 - the title of a tier page or file in a link from a page the user can read.
 
 Files without a tier prefix are not protected beyond the login, see
@@ -281,11 +284,20 @@ LibreChat exactly as to the browser, and every edit made through LibreChat is
 recorded under the user's name.
 
 What the MCP server may do is the grant list in `MEDIAWIKI_MCP_GRANTS`. The
-default covers reading, editing, creating and moving pages and uploading
-files; add `delete` and `protect` to allow deleting and protecting pages, and
-`highvolume` for higher API limits. A grant never adds a right the user does
-not have. Changing the list asks every user to consent again. Each user can
-review and revoke the consent at `Special:OAuthManageMyGrants`.
+default covers reading, editing and creating pages and uploading files. Moving
+pages and files is off: a move out of a tier namespace publishes the page to
+every user, and a model acting for a tier member should not be able to make
+that slip. The add-on takes the move rights out of MediaWiki's
+`createeditmovepage` and `uploadeditmovefile` grants and puts them into a
+grant of its own, `movepage`. Add `movepage` to allow moving, `delete` and
+`protect` to allow deleting and protecting pages, and `highvolume` for higher
+API limits. A grant never adds a right the user does not have.
+
+Changing the list asks every user to consent again; the MCP server picks up
+the new consumer by itself within a few seconds, and going back to an earlier
+list re-enables that list's consumer. A consumer an administrator disabled at
+`Special:OAuthManageConsumers` stays disabled. Each user can review and revoke
+the consent at `Special:OAuthManageMyGrants`.
 
 ### Group changes
 
@@ -503,13 +515,17 @@ tests/run.sh            # [--port=18020] [--keep]
 ```
 
 Starts the wiki and its database from this `docker-compose.yml` under a
-throw-away project (local login on, no Keycloak needed), seeds a tier member
-and a user outside the tiers, and runs `tests/tier_check.py`: the member
-writes a tier page, a tier file and a file talk page with random markers in
-content, summaries, upload comments and file bytes, and the outsider then
+throw-away project (local login on, no Keycloak needed) with a Mailpit
+container as its mail relay, seeds a tier member and a user outside the
+tiers, and runs `tests/tier_check.py`: the member writes a tier page, a tier
+talk page, a tier redirect, a tier file and a file talk page with random
+markers in content, summaries, upload comments, file bytes, link targets,
+categories, templates, external links and sort keys, and the outsider then
 requests every path listed under [What is protected](#what-is-protected) --
-browser, feeds, logs, search, Action API, REST API, `img_auth.php`,
-thumbnails -- and tries to upload, overwrite, edit and move into the tier.
+browser, feeds, logs, search, Action API, REST API, revision and page ids,
+edit forms, link-table listings, `img_auth.php`, thumbnails, the watchlist
+and its notification mails -- and tries to upload, overwrite, edit, create,
+move and transclude into or from the tier.
 No response may carry a marker. The member and the break-glass admin are
 positive controls. Everything is removed afterwards.
 
@@ -558,8 +574,8 @@ OAuth signing keys and the MCP sign-ins.
   a shared account. The wiki's own permission checks decide every call, and
   edits are attributed to the user. Shared bot passwords are switched off.
 - **Least privilege for the MCP server:** it acts with the grants in
-  `MEDIAWIKI_MCP_GRANTS` only; deleting and protecting pages are off by
-  default.
+  `MEDIAWIKI_MCP_GRANTS` only; moving, deleting and protecting pages are off
+  by default.
 - **Per-service environment:** no container loads the `.env` wholesale. The
   MCP server never sees the database or admin password; the wiki never sees
   the MCP signing key.

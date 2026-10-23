@@ -220,7 +220,7 @@ env_prompts:
 
   MEDIAWIKI_MCP_GRANTS:
     label: "MCP server grants"
-    hint: "OAuth grants the MCP server acts with; add delete,protect to allow those. Changing it asks users to consent again"
+    hint: "OAuth grants the MCP server acts with; add movepage, delete or protect to allow those. Changing it asks users to consent again"
     type: text
     pattern: "^[a-z]+(,[a-z]+)*$"
 

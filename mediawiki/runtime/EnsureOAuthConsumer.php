@@ -9,7 +9,8 @@
  * grants, so the same configuration finds the same consumer on every start.
  * The extension never changes the callback or grants of an existing consumer,
  * so a changed public URL or grant list proposes a new consumer and disables
- * the old ones; users then consent once more.
+ * the old ones; users then consent once more. Going back to an earlier
+ * configuration re-enables its consumer, unless an administrator disabled it.
  *
  * The consumer is confidential, uses the authorization-code and refresh-token
  * grants, and is approved right away. Its key and secret are written as a
@@ -23,11 +24,16 @@ use MediaWiki\Extension\OAuth\Backend\Utils;
 use MediaWiki\Extension\OAuth\Control\ConsumerSubmitControl;
 use MediaWiki\Maintenance\Maintenance;
 use MediaWiki\MediaWikiServices;
+use Wikimedia\Rdbms\IExpression;
+use Wikimedia\Rdbms\LikeValue;
+use Wikimedia\Rdbms\SelectQueryBuilder;
 
 require_once getenv( 'MW_INSTALL_PATH' ) . '/maintenance/Maintenance.php';
 
 class EnsureOAuthConsumer extends Maintenance {
 	private const NAME = 'papaia-mcp';
+	/** Reason of every action this script takes on a consumer. */
+	private const REASON = 'papaia-addon-mediawiki bootstrap';
 
 	public function __construct() {
 		parent::__construct();
@@ -99,12 +105,16 @@ class EnsureOAuthConsumer extends Maintenance {
 			$cmr = $status->value['result']['consumer'];
 			$this->output( "Proposed OAuth consumer " . self::NAME . " $version\n" );
 		}
-		# Only a fresh proposal is approved here. A consumer an administrator
-		# disabled stays disabled across restarts.
+		# A fresh proposal is approved here, and so is a consumer this script
+		# disabled itself when the configuration moved on and has now come
+		# back. A consumer an administrator disabled stays disabled.
 		$stage = (int)$cmr->getStage();
 		if ( $stage === Consumer::STAGE_PROPOSED ) {
 			$this->submit( $context, $dbw, $cmr, 'approve' );
 			$this->output( "Approved OAuth consumer " . self::NAME . " $version\n" );
+		} elseif ( $stage === Consumer::STAGE_DISABLED && $this->disabledBySelf( $dbw, $cmr ) ) {
+			$this->submit( $context, $dbw, $cmr, 'reenable' );
+			$this->output( "Re-enabled OAuth consumer " . self::NAME . " $version\n" );
 		} elseif ( $stage !== Consumer::STAGE_APPROVED ) {
 			$this->output( "WARNING: OAuth consumer " . self::NAME . " $version is "
 				. Consumer::$stageNames[$stage] . "; MCP sign-in stays off until it is approved again\n" );
@@ -139,11 +149,28 @@ class EnsureOAuthConsumer extends Maintenance {
 		}
 	}
 
+	/** Whether the consumer's last management action was a disable by this script. */
+	private function disabledBySelf( $dbw, Consumer $cmr ): bool {
+		$row = $dbw->newSelectQueryBuilder()
+			->select( [ 'log_action', 'comment_text' ] )
+			->from( 'logging' )
+			->join( 'comment', null, 'comment_id = log_comment_id' )
+			->where( [
+				'log_type' => 'mwoauthconsumer',
+				$dbw->expr( 'log_params', IExpression::LIKE,
+					new LikeValue( $dbw->anyString(), $cmr->getConsumerKey(), $dbw->anyString() ) ),
+			] )
+			->orderBy( 'log_id', SelectQueryBuilder::SORT_DESC )
+			->caller( __METHOD__ )
+			->fetchRow();
+		return $row && $row->log_action === 'disable' && $row->comment_text === self::REASON;
+	}
+
 	private function submit( $context, $dbw, Consumer $cmr, string $action ): void {
 		$status = ( new ConsumerSubmitControl( $context, [
 			'action' => $action,
 			'consumerKey' => $cmr->getConsumerKey(),
-			'reason' => 'papaia-addon-mediawiki bootstrap',
+			'reason' => self::REASON,
 			'changeToken' => $cmr->getChangeToken( $context ),
 			'suppress' => 0,
 		], $dbw ) )->submit();

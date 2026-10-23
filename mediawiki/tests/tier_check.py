@@ -6,8 +6,10 @@ in the tier group writes a page, a file and a file talk page into the
 Management tier, each carrying a random marker in content, edit summary,
 upload comment and file bytes. A user outside the tier then requests every
 path the add-on is meant to close -- page and file views, img_auth.php,
-thumbnails, listings, feeds, logs, search, the Action API and the REST API --
-and none of the responses may carry a marker or serve the file. The tier
+thumbnails, listings, feeds, logs, search, the Action API and the REST API,
+revision and page ids, edit forms, link and category tables, the watchlist
+and its notification mails -- and none of the responses may carry a marker
+or serve the file. The tier
 member and the break-glass admin act as positive controls, so a check cannot
 pass merely because nothing was there to leak.
 
@@ -22,6 +24,7 @@ import secrets
 import ssl
 import struct
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -157,6 +160,45 @@ class Client:
             return err.code
 
 
+class MailCatcher:
+    """The Mailpit HTTP API that run.sh sets up as the wiki's relay."""
+
+    def __init__(self, base: str):
+        self.base = base.rstrip("/")
+
+    def _call(self, path: str, method: str = "GET"):
+        req = urllib.request.Request(self.base + path, method=method)
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            body = resp.read()
+        # DELETE answers a plain "ok".
+        return json.loads(body) if body.startswith((b"{", b"[")) else None
+
+    def clear(self) -> None:
+        self._call("/api/v1/messages", "DELETE")
+
+    def messages(self):
+        """[(recipients, full text)] of every caught message."""
+        out = []
+        for msg in self._call("/api/v1/messages?limit=500").get("messages", []):
+            full = self._call(f"/api/v1/message/{msg['ID']}")
+            to = " ".join(t["Address"] for t in full.get("To", []))
+            out.append((to, f"{full.get('Subject', '')}\n{full.get('Text', '')}\n{full.get('HTML', '')}"))
+        return out
+
+    def wait_for(self, recipient: str, nudge, seconds: int = 60):
+        """Messages once one reaches the recipient (or the time is up); nudge() runs queued jobs."""
+        deadline = time.monotonic() + seconds
+        while True:
+            texts = self.messages()
+            if any(recipient in to for to, _ in texts) or time.monotonic() > deadline:
+                # A notification to another watcher may be one job behind.
+                nudge()
+                time.sleep(2)
+                return self.messages()
+            nudge()
+            time.sleep(1)
+
+
 def png(marker: str, size: int = 200) -> bytes:
     """A solid-colour PNG carrying the marker in a tEXt chunk."""
 
@@ -199,6 +241,7 @@ def main() -> int:
     ap.add_argument("--admin", default="Admin")
     ap.add_argument("--password", required=True, help="password of member and outsider")
     ap.add_argument("--admin-password", required=True)
+    ap.add_argument("--mail-api", help="Mailpit API of the wiki's relay; watchlist mail checks run only with it")
     args = ap.parse_args()
 
     run = secrets.token_hex(4)
@@ -208,11 +251,24 @@ def main() -> int:
     m_filedesc = f"ZQXFILEDESC{run}"
     m_bytes = f"ZQXBYTES{run}"
     m_talk = f"ZQXTALK{run}"
+    m_tiertalk = f"ZQXTIERTALK{run}"
+    # What the tier page's text puts into the link, category and property
+    # tables: listings built from those tables must not carry it either.
+    m_ext = f"ZQXEXT{run}"
+    m_red = f"ZQXRED{run}"
+    m_cat = f"ZQXCAT{run}"
+    m_tpl = f"ZQXTPL{run}"
+    m_wanted = f"ZQXWANTED{run}"
+    m_sort = f"ZQXSORT{run}"
+    m_mail = f"ZQXMAIL{run}"
+    m_redir = f"ZQXREDIR{run}"
     # Search terms: a search page echoes its query, so the queries use words
     # that sit next to the markers instead of the markers themselves.
     w_page = f"ZQXWORDPAGE{run}"
     w_file = f"ZQXWORDFILE{run}"
-    markers = [m_content, m_summary, m_upload, m_filedesc, m_talk]
+    ext_host = f"zqxext{run}.example.org"
+    markers = [m_content, m_summary, m_upload, m_filedesc, m_talk, m_tiertalk,
+               m_ext, m_red, m_cat, m_tpl, m_wanted, m_sort, m_mail, m_redir]
     checks = Checks()
 
     # ── Seed, as the tier member ───────────────────────────────────────────
@@ -236,13 +292,21 @@ def main() -> int:
     member.edit(f"File talk:{FILE}", f"Talk {m_talk}", f"talk {m_summary}")
     rev1 = member.edit(PAGE, f"First {m_content}", f"first {m_summary}")
     rev2 = member.edit(
-        PAGE, f"Plan {w_page} {m_content}\n\n[[File:{FILE}|50px]]", f"second {m_summary}"
+        PAGE,
+        f"Plan {w_page} {m_content}\n\n[[File:{FILE}|50px]]\n\n"
+        f"https://{ext_host}/{m_ext} [[{m_red}]] {{{{{m_tpl}}}}} [[File:{m_wanted}.png]]\n\n"
+        f"[[Category:{m_cat}]] {{{{DEFAULTSORT:{m_sort}}}}}",
+        f"second {m_summary}",
     )
-    member.edit(
+    member.edit(f"{TIER} talk:Plan", f"Tier talk {m_tiertalk}", f"tier talk {m_summary}")
+    member.edit(f"{TIER}:Shortcut", f"#REDIRECT [[{m_redir}]]", "tier redirect")
+    pub_rev = member.edit(
         PUBLIC_PAGE,
         f"Public text.\n\n{{{{:{PAGE}}}}}\n\n[[File:{FILE}|50px]]\n\n[[Media:{FILE}]]",
         "public page",
     )
+    _, _, data = member.api({"action": "query", "titles": PAGE, "prop": "info"})
+    page_id = data["query"]["pages"][0]["pageid"]
 
     _, html, _ = member.request("/index.php", {"title": PAGE})
     thumb = re.search(r'src="(/img_auth\.php/thumb/[^"]+)"', html)
@@ -283,6 +347,18 @@ def main() -> int:
     checks.ok("member's duplicate warning names the tier twin", TWIN_FILE in dup, dup[:300])
     dup = json.dumps(member.upload("Member-gone.png", gone_bytes, "x", "x", ignore_warnings=False))
     checks.ok("member's deleted-duplicate warning names the tier file", GONE_FILE in dup, dup[:300])
+    # Link-table listings are refused to everyone with a hidden tier, the
+    # member included (Operations); the admin reads every tier.
+    _, body, _ = admin.api({"action": "query", "list": "alllinks", "allimit": "max"})
+    checks.ok("admin sees the tier page's link target in list=alllinks", m_red in body)
+    _, body, _ = member.api({"action": "query", "list": "exturlusage", "euquery": ext_host, "eulimit": "max"})
+    checks.ok("member finds the tier page's external link", m_ext in body, body[:300])
+    _, body, _ = admin.request("/index.php", {"title": "Special:WantedPages", "limit": "500"})
+    checks.ok("admin sees the tier page's red link in Special:WantedPages", m_red in body)
+    _, body, _ = admin.api({"action": "query", "list": "allredirects", "arprop": "title", "arlimit": "max"})
+    checks.ok("admin sees the tier redirect's target in list=allredirects", m_redir in body)
+    _, body, _ = member.request("/index.php", {"title": f"{TIER} talk:Plan"})
+    checks.ok("member reads the tier talk page", m_tiertalk in body)
 
     # ── Outsider ───────────────────────────────────────────────────────────
     out = Client(args.base)
@@ -418,7 +494,111 @@ def main() -> int:
     page = out.special_upload("Outsider-gone.png", gone_bytes)
     checks.no_leak("Special:Upload deleted-duplicate warning", page.replace(" ", "_"), [GONE_FILE])
 
+    print("\nTier page by id, and the tier talk page")
+    checks.no_leak("curid", out.request("/index.php", {"curid": page_id})[1], markers)
+    for label, special in (("PermanentLink", f"PermanentLink/{rev1}"),
+                           ("Redirect/revision", f"Redirect/revision/{rev1}"),
+                           ("Redirect/page", f"Redirect/page/{page_id}"),
+                           ("Diff", f"Diff/{rev2}"), ("Diff between revisions", f"Diff/{rev1}/{rev2}")):
+        checks.no_leak(f"Special:{label}", wiki(f"Special:{special}"), markers)
+    checks.no_leak("tier revision under a public title", wiki(PUBLIC_PAGE, oldid=rev1), markers)
+    checks.no_leak("tier revision under a public title, raw", wiki(PUBLIC_PAGE, oldid=rev1, action="raw"), markers)
+    checks.no_leak("diff from a public revision to a tier revision", wiki(PUBLIC_PAGE, diff=rev2, oldid=pub_rev),
+                   markers)
+    checks.no_leak("action=info", wiki(PAGE, action="info"), markers)
+    checks.no_leak("action=credits", wiki(PAGE, action="credits"), markers)
+    checks.no_leak("Special:ComparePages by title", wiki(
+        "Special:ComparePages", page1=PUBLIC_PAGE, page2=PAGE), markers)
+    checks.no_leak("Special:ComparePages by revision", wiki(
+        "Special:ComparePages", rev1=pub_rev, rev2=rev2), markers)
+    checks.no_leak("tier talk page", wiki(f"{TIER} talk:Plan"), markers)
+    checks.no_leak("tier talk page, raw", wiki(f"{TIER} talk:Plan", action="raw"), markers)
+    for path in (f"/v1/revision/{rev1}/bare", f"/v1/revision/{rev1}/html", f"/v1/revision/{rev1}/with_html",
+                 f"/v1/page/{enc(PAGE)}/bare", f"/v1/page/{enc(TIER + '_talk:Plan')}"):
+        checks.no_leak(f"REST {path.split('/')[2]} {path.rsplit('/', 1)[-1]}", rest(path), markers)
+
+    print("\nEdit form of a public page")
+    checks.no_leak("preload from the tier", wiki(PUBLIC_PAGE, action="edit", preload=PAGE), markers)
+    checks.no_leak("preload into a new page", wiki("Outsider sandbox", action="edit", preload=PAGE), markers)
+    checks.no_leak("preload into a new section", wiki(
+        PUBLIC_PAGE, action="edit", section="new", preload=PAGE), markers)
+    checks.no_leak("undo of tier revisions", wiki(PUBLIC_PAGE, action="edit", undo=rev2, undoafter=rev1), markers)
+    checks.no_leak("edit form for a tier revision", wiki(PUBLIC_PAGE, action="edit", oldid=rev1), markers)
+    checks.no_leak("edit form of the tier page", wiki(PAGE, action="edit"), markers)
+
+    print("\nLinks, categories and properties of the tier page")
+    checks.no_leak("prop=links|templates|categories|extlinks|images|pageprops", api(
+        action="query", titles=PAGE, prop="links|templates|categories|extlinks|images|pageprops",
+        pllimit="max", tllimit="max", cllimit="max", ellimit="max", imlimit="max"), markers)
+    checks.no_leak("list=alllinks", api(action="query", list="alllinks", allimit="max"), markers)
+    checks.no_leak("list=alltransclusions", api(action="query", list="alltransclusions", atlimit="max"), markers)
+    checks.no_leak("list=allfileusages", api(action="query", list="allfileusages", aflimit="max"), markers)
+    checks.no_leak("list=allcategories", api(action="query", list="allcategories", aclimit="max"), markers)
+    checks.no_leak("list=exturlusage", api(
+        action="query", list="exturlusage", euquery=ext_host, euprop="title|url", eulimit="max"), markers)
+    checks.no_leak("list=exturlusage, all", api(
+        action="query", list="exturlusage", euprop="title|url", eulimit="max"), markers)
+    checks.no_leak("list=pageswithprop", api(
+        action="query", list="pageswithprop", pwppropname="defaultsort", pwpprop="title|value"), markers)
+    checks.no_leak("list=allredirects", api(action="query", list="allredirects", arprop="title|ids", arlimit="max"),
+                   markers)
+    querypages = ("Wantedpages", "Wantedcategories", "Wantedtemplates", "Wantedfiles", "Mostlinked",
+                  "Mostlinkedcategories", "Mostlinkedtemplates", "Mostcategories", "Fewestrevisions",
+                  "Deadendpages", "Lonelypages", "Shortpages", "Longpages", "Ancientpages", "Listredirects")
+    for qp in querypages:
+        checks.no_leak(f"list=querypage {qp}", api(action="query", list="querypage", qppage=qp, qplimit="max"),
+                       markers)
+    for special in querypages + ("Categories", "UncategorizedPages", "AllPages"):
+        checks.no_leak(f"Special:{special}", wiki(f"Special:{special}", limit="500"), markers)
+    checks.no_leak("Special:LinkSearch", wiki("Special:LinkSearch", target=ext_host), markers)
+    checks.no_leak("Special:LinkSearch, all", wiki("Special:LinkSearch", target="*.example.org"), markers)
+    checks.no_leak("Special:PagesWithProp", wiki("Special:PagesWithProp", propname="defaultsort"), markers)
+
+    print("\nWatchlist")
+    mail = MailCatcher(args.mail_api) if args.mail_api else None
+    if mail:
+        mail.clear()
+    for client in (member, out):
+        client.api({"action": "watch", "titles": PAGE, "token": client.token("watch")}, post=True)
+    admin.edit(PAGE, f"Plan {w_page} {m_content} after review", f"review {m_mail}")
+    checks.no_leak("list=watchlist", api(
+        action="query", list="watchlist", wlprop="title|comment|parsedcomment|user", wllimit="max"), markers)
+    checks.no_leak("Special:Watchlist", wiki("Special:Watchlist", days="30"), markers)
+    feed = lambda **p: out.request("/api.php", p)[1]  # XML, not JSON
+    checks.no_leak("watchlist feed", feed(action="feedwatchlist", feedformat="atom"), markers)
+    checks.no_leak("contributions feed", feed(action="feedcontributions", user=args.admin), markers)
+    checks.no_leak("recent changes feed", feed(action="feedrecentchanges", days="30"), markers)
+    if mail:
+        # Notifications go out from the job queue, which runs on web requests.
+        texts = mail.wait_for("member@example.org", lambda: member.request("/index.php", {"title": PUBLIC_PAGE}))
+        checks.ok("member gets the watchlist mail for the tier page",
+                  any(m_mail in t for to, t in texts if "member@example.org" in to))
+        outsider_mail = [t for to, t in texts if "outsider@example.org" in to]
+        checks.ok("outsider gets no watchlist mail for the tier page", not outsider_mail,
+                  f"({len(outsider_mail)} mails)")
+        checks.no_leak("watchlist mails to the outsider", "\n".join(outsider_mail), markers)
+    else:
+        print("  skip  watchlist mail (no --mail-api)")
+
     print("\nWrites")
+    _, _, data = out.api(
+        {"action": "edit", "title": f"{TIER}:Outsider", "text": "x", "createonly": "1", "token": out.token()},
+        post=True)
+    checks.ok("outsider cannot create a page in the tier", "error" in data, f"({data})")
+    _, _, data = out.api(
+        {"action": "edit", "title": f"{TIER} talk:Plan", "appendtext": "x", "token": out.token()}, post=True)
+    checks.ok("outsider cannot edit the tier talk page", "error" in data, f"({data})")
+    out.edit("Outsider page", "Outsider text.", "outsider page")
+    _, _, data = out.api(
+        {"action": "move", "from": "Outsider page", "to": f"{TIER}:Outsider page", "token": out.token()}, post=True)
+    checks.ok("outsider cannot move a page into the tier", "error" in data, f"({data})")
+    out.edit("Outsider redirect", f"#REDIRECT [[{PAGE}]]", "redirect")
+    checks.no_leak("own redirect to the tier page", wiki("Outsider redirect"), markers)
+    out.edit("Outsider lever", f"{{{{:{PAGE}}}}} {{{{msgnw::{PAGE}}}}} {{{{raw::{PAGE}}}}} "
+             f"{{{{{TIER}:Plan}}}} {{{{:{TIER.lower()}:Plan}}}} {{{{:{TIER} talk:Plan}}}}", "lever")
+    checks.no_leak("own page transcluding the tier", wiki("Outsider lever"), markers)
+    checks.no_leak("own page transcluding the tier, parsed by the API", api(action="parse", page="Outsider lever"),
+                   markers)
     planted = out.upload(f"{TIER}-Planted.png", png("planted"), "planted", "planted")
     checks.ok("outsider cannot upload into the tier", "error" in planted, f"({planted})")
     over = out.upload(FILE, png("overwrite"), "overwrite", "overwrite")

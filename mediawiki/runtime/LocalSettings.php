@@ -456,6 +456,14 @@ $wgHooks['SpecialLogAddLogSearchRelations'][] = static function ( $type, $reques
 	}
 };
 
+# Watchlist mails carry the editor, the time and the edit summary. Anyone can
+# watch any title (the API does not check read access), and a member keeps
+# their watchlist after leaving a tier group, so the mail is checked against
+# the watcher, not the editor.
+$wgHooks['SendWatchlistEmailNotification'][] = static function ( $targetUser, $title, $enotif ) {
+	return !papaiaIsHidden( $targetUser, $title->getNamespace(), $title->getDBkey() );
+};
+
 # Special:Search: drop hits from hidden tiers. Tier namespaces never reach
 # the result (Lockdown removes them from the search); files of a hidden tier
 # share the File namespace with everything else and are dropped here.
@@ -471,6 +479,24 @@ $wgHooks['ShowSearchHit'][] = static function (
 	return true;
 };
 
+# Listings built from the link tables of the whole wiki: the targets of links,
+# transclusions, file embeds, categories and redirects, external URLs and
+# page properties. Each entry names what a page's text points to, not the
+# page, so the namespace of a row says nothing about where it came from, and
+# a tier page's red links, categories and URLs would show up for everyone.
+# Refused to a user with a hidden tier, as a special page, as a query page
+# and as an Action API list or generator.
+const PAPAIA_LINK_TABLE_PAGES = [
+	'Wantedpages', 'Wantedcategories', 'Wantedtemplates', 'Wantedfiles', 'Mostlinked',
+	'Mostlinkedcategories', 'Mostlinkedtemplates', 'Mostimages', 'Categories', 'LinkSearch',
+	'PagesWithProp', 'Listredirects',
+];
+# list=exturlusage and list=pageswithprop report the linking page and are
+# filtered with the other query modules below.
+const PAPAIA_LINK_TABLE_MODULES = [
+	'alllinks', 'alltransclusions', 'allfileusages', 'allcategories', 'allredirects',
+];
+
 # File listings without a query hook: description, uploader, size and
 # thumbnail of every file at once. Refused to a user with a hidden tier
 # rather than shown with tier files; the thumbnails would be refused by
@@ -480,7 +506,7 @@ $wgHooks['SpecialPageBeforeExecute'][] = static function ( $special, $subPage ) 
 		'Listfiles', 'Newimages', 'MIMEsearch', 'ListDuplicatedFiles',
 		'FileDuplicateSearch', 'Unusedimages', 'Uncategorizedimages',
 	];
-	if ( in_array( $special->getName(), $fileListings, true )
+	if ( in_array( $special->getName(), array_merge( $fileListings, PAPAIA_LINK_TABLE_PAGES ), true )
 		&& papaiaHiddenNamespaces( $special->getUser() )
 	) {
 		throw new PermissionsError( null, [ [ 'badaccess-group0' ] ] );
@@ -670,6 +696,16 @@ $wgHooks['ApiCheckCanExecute'][] = static function ( $module, $user, &$message )
 		$message = ApiMessage::create( 'apierror-permissiondenied-generic', 'permissiondenied' );
 		return false;
 	}
+	# Link-table listings, see PAPAIA_LINK_TABLE_PAGES.
+	$lists = array_merge( explode( '|', (string)$request->getVal( 'list', '' ) ),
+		[ (string)$request->getVal( 'generator', '' ) ] );
+	$queryPages = [ (string)$request->getVal( 'qppage', '' ), (string)$request->getVal( 'gqppage', '' ) ];
+	if ( array_intersect( $lists, PAPAIA_LINK_TABLE_MODULES )
+		|| ( array_intersect( $lists, [ 'querypage' ] ) && array_intersect( $queryPages, PAPAIA_LINK_TABLE_PAGES ) )
+	) {
+		$message = ApiMessage::create( 'apierror-permissiondenied-generic', 'permissiondenied' );
+		return false;
+	}
 	foreach ( [ 'srnamespace', 'gsrnamespace' ] as $param ) {
 		if ( !$request->getCheck( $param ) ) {
 			continue;
@@ -747,6 +783,29 @@ $wgGroupPermissions['user']['mwoauthmanagemygrants'] = true;
 foreach ( [ 'mwoauthproposeconsumer', 'mwoauthupdateownconsumer', 'mwoauthmanageconsumer' ] as $papaiaRight ) {
 	$wgGroupPermissions['sysop'][$papaiaRight] = true;
 }
+
+# Moving is its own grant, "movepage", off by default. The core grants that
+# create pages and upload files also carry the move rights, and a move out of
+# a tier namespace publishes the page to everyone: a slip a model acting for a
+# tier member should not be able to make. Taking the rights out of the core
+# grants applies to existing consents as well, without asking users again.
+$papaiaMoveRights = [ 'move', 'move-rootuserpages', 'move-subpages', 'move-categorypages', 'movefile',
+	'suppressredirect', 'delete-redirect' ];
+foreach ( [ 'createeditmovepage', 'uploadeditmovefile' ] as $papaiaGrant ) {
+	foreach ( $papaiaMoveRights as $papaiaRight ) {
+		unset( $wgGrantPermissions[$papaiaGrant][$papaiaRight] );
+	}
+}
+$wgGrantPermissions['movepage'] = array_fill_keys( $papaiaMoveRights, true );
+$wgGrantPermissionGroups['movepage'] = 'page-interaction';
+$wgHooks['MessagesPreLoad'][] = static function ( $title, &$message, $code ) {
+	# Every language gets the English text; the title carries "/<code>" outside the content language.
+	if ( $title === 'Grant-movepage' || str_starts_with( $title, 'Grant-movepage/' ) ) {
+		$message = 'Move pages and files';
+		return false;
+	}
+	return true;
+};
 
 ## ── Misc ──────────────────────────────────────────────────────────────────
 $wgShowExceptionDetails = papaiaEnvBool( 'MW_DEBUG', false );

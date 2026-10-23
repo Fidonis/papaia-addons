@@ -36,4 +36,21 @@ case "$host" in
         ;;
 esac
 
-exec node /app/dist/index.js
+# The wiki writes new credentials when the public URL or the grant list
+# changes, on its own start; this container is not recreated then. Stop the
+# server when the file changes, and the restart policy brings it back with
+# the new consumer.
+creds_sum() { cksum < /papaia/credentials/oauth.env 2>/dev/null || true; }
+loaded="$(creds_sum)"
+node /app/dist/index.js &
+pid=$!
+trap 'kill -TERM "$pid" 2>/dev/null' TERM INT
+while kill -0 "$pid" 2>/dev/null; do
+    sleep 5
+    if [ "$(creds_sum)" != "$loaded" ]; then
+        printf 'mediawiki-mcp: OAuth consumer credentials changed; restarting\n' >&2
+        kill -TERM "$pid" 2>/dev/null || true
+        break
+    fi
+done
+wait "$pid"

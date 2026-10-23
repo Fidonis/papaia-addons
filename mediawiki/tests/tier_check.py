@@ -32,6 +32,9 @@ PAGE = f"{TIER}:Plan"
 UPLOAD_NAME = f"{TIER}:Plan.png"  # MediaWiki stores it as Management-Plan.png
 FILE = f"{TIER}-Plan.png"
 VARIANT_FILE = "MANAGEMENT -Variant.png"  # stored as MANAGEMENT_-Variant.png
+TWIN_FILE = f"{TIER}-Twin.png"  # same content as PUBLIC_TWIN
+PUBLIC_TWIN = "Public-twin.png"
+GONE_FILE = f"{TIER}-Gone.png"  # deleted after the upload
 PUBLIC_PAGE = "Public page"
 
 
@@ -97,36 +100,53 @@ class Client:
             raise SystemExit(f"edit of {title} failed: {data}")
         return data["edit"]["newrevid"]
 
-    def upload(self, filename: str, content: bytes, comment: str, text: str) -> dict:
+    def post_multipart(self, path: str, fields: dict, file_field: str, content: bytes) -> str:
         boundary = "----papaia" + secrets.token_hex(8)
-        fields = {
-            "action": "upload",
-            "filename": filename,
-            "comment": comment,
-            "text": text,
-            "ignorewarnings": "1",
-            "format": "json",
-            "formatversion": "2",
-            "token": self.token(),
-        }
         parts = []
         for name, value in fields.items():
             parts.append(
                 f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode()
             )
         parts.append(
-            f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="upload.png"\r\n'
+            f'--{boundary}\r\nContent-Disposition: form-data; name="{file_field}"; filename="upload.png"\r\n'
             "Content-Type: image/png\r\n\r\n".encode()
             + content
             + b"\r\n"
         )
         parts.append(f"--{boundary}--\r\n".encode())
         _, body, _ = self.request(
-            "/api.php",
+            path,
             data=b"".join(parts),
             headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
         )
-        return json.loads(body)
+        return body
+
+    def upload(self, filename: str, content: bytes, comment: str, text: str,
+               ignore_warnings: bool = True) -> dict:
+        fields = {
+            "action": "upload",
+            "filename": filename,
+            "comment": comment,
+            "text": text,
+            "format": "json",
+            "formatversion": "2",
+            "token": self.token(),
+        }
+        if ignore_warnings:
+            fields["ignorewarnings"] = "1"
+        return json.loads(self.post_multipart("/api.php", fields, "file", content))
+
+    def special_upload(self, filename: str, content: bytes) -> str:
+        """Upload through the Special:Upload form; returns the page, e.g. its warnings."""
+        fields = {
+            "title": "Special:Upload",
+            "wpSourceType": "file",
+            "wpDestFile": filename,
+            "wpUploadDescription": "form upload",
+            "wpEditToken": self.token(),
+            "wpUpload": "Upload file",
+        }
+        return self.post_multipart("/index.php", fields, "wpUploadFile", content)
 
     def get_bytes_status(self, path: str) -> int:
         try:
@@ -208,6 +228,11 @@ def main() -> int:
     up = member.upload(VARIANT_FILE, png(m_bytes + "v"), f"upload {m_upload}", f"Description {m_filedesc}")
     variant = up.get("upload", {}).get("filename", "")
     checks.ok("non-canonical tier prefix upload", variant.lower().startswith("management_-"), f"({up})")
+    twin_bytes = png(f"twin{run}")
+    gone_bytes = png(f"gone{run}")
+    member.upload(TWIN_FILE, twin_bytes, "twin", "Twin.")
+    member.upload(PUBLIC_TWIN, twin_bytes, "public twin", "Public twin.")
+    member.upload(GONE_FILE, gone_bytes, "gone", "Gone.")
     member.edit(f"File talk:{FILE}", f"Talk {m_talk}", f"talk {m_summary}")
     rev1 = member.edit(PAGE, f"First {m_content}", f"first {m_summary}")
     rev2 = member.edit(
@@ -248,6 +273,16 @@ def main() -> int:
     checks.ok("admin lists the tier file", m_upload in body)
     _, body, _ = admin.request("/index.php", {"title": "Special:Log", "type": "upload"})
     checks.ok("admin sees the upload log entry", m_upload in body)
+    _, _, data = admin.api(
+        {"action": "delete", "title": f"File:{GONE_FILE}", "reason": "gone", "token": admin.token()}, post=True)
+    if "delete" not in data:
+        raise SystemExit(f"delete of {GONE_FILE} failed: {data}")
+    _, body, _ = member.api({"action": "query", "titles": f"File:{PUBLIC_TWIN}", "prop": "duplicatefiles"})
+    checks.ok("member sees the tier twin in prop=duplicatefiles", TWIN_FILE in body.replace(" ", "_"), body[:300])
+    dup = json.dumps(member.upload("Member-twin.png", twin_bytes, "x", "x", ignore_warnings=False))
+    checks.ok("member's duplicate warning names the tier twin", TWIN_FILE in dup, dup[:300])
+    dup = json.dumps(member.upload("Member-gone.png", gone_bytes, "x", "x", ignore_warnings=False))
+    checks.ok("member's deleted-duplicate warning names the tier file", GONE_FILE in dup, dup[:300])
 
     # ── Outsider ───────────────────────────────────────────────────────────
     out = Client(args.base)
@@ -368,6 +403,20 @@ def main() -> int:
         ucprop="title|comment"), file_markers)
     checks.no_leak("REST page of the file", rest(f"/v1/page/{enc('File:' + FILE)}"), file_markers)
     checks.no_leak("REST search, files", rest(f"/v1/search/page?q={w_file}"), file_markers)
+
+    print("\nDuplicate lookups by content")
+    checks.no_leak("prop=duplicatefiles", api(
+        action="query", titles=f"File:{PUBLIC_TWIN}", prop="duplicatefiles"), [TWIN_FILE])
+    dup = json.dumps(out.upload("Outsider-twin.png", twin_bytes, "x", "x", ignore_warnings=False))
+    checks.ok("API upload still warns about the visible duplicate", PUBLIC_TWIN in dup, dup[:300])
+    checks.no_leak("API upload duplicate warning", dup, [TWIN_FILE])
+    page = out.special_upload("Outsider-twin.png", twin_bytes)
+    checks.ok("Special:Upload still warns about the visible duplicate", PUBLIC_TWIN in page.replace(" ", "_"))
+    checks.no_leak("Special:Upload duplicate warning", page.replace(" ", "_"), [TWIN_FILE])
+    dup = json.dumps(out.upload("Outsider-gone.png", gone_bytes, "x", "x", ignore_warnings=False))
+    checks.no_leak("API upload deleted-duplicate warning", dup, [GONE_FILE])
+    page = out.special_upload("Outsider-gone.png", gone_bytes)
+    checks.no_leak("Special:Upload deleted-duplicate warning", page.replace(" ", "_"), [GONE_FILE])
 
     print("\nWrites")
     planted = out.upload(f"{TIER}-Planted.png", png("planted"), "planted", "planted")

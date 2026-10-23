@@ -197,9 +197,10 @@ from starting with a message naming the mistake.
 Uploaded files all live in MediaWiki's `File:` namespace, which is not a tier.
 A file belongs to a tier through its **name**: `File:Management-Plan.pdf` is in
 the Management tier and readable only by its groups. Upload it as
-`Management:Plan.pdf` or `Management-Plan.pdf` -- MediaWiki turns the colon
-into a hyphen -- and embed it as `[[File:Management-Plan.pdf]]`. The prefix is
-matched case-insensitively.
+`Management-Plan.pdf`, and embed it as `[[File:Management-Plan.pdf]]`. The
+prefix is matched case-insensitively. A name typed as `Management:Plan.pdf`
+lands in the same place, since MediaWiki turns the colon into a hyphen; the
+upload form then asks once to confirm the changed name.
 
 A file without a tier prefix is readable by **every logged-in user**, no
 matter on which page it is embedded. A tier file embedded on a page outside
@@ -226,6 +227,7 @@ Lockdown leaves open, per viewer:
 | `Special:RecentChanges`, `Special:Watchlist`, their feeds, `Special:NewPages`, `Special:Contributions`, `Special:Log` | Entries from hidden tiers filtered out, including edit summaries and upload comments |
 | `Special:ListFiles`, `NewFiles`, `MIMESearch`, `ListDuplicatedFiles`, `FileDuplicateSearch`, `UnusedFiles`, `UncategorizedFiles` | Refused to users who cannot read every tier: these list all files with their upload comments and offer no filter |
 | Action API list modules (`recentchanges`, `allpages`, `allimages`, `logevents`, `usercontribs`, `allrevisions`, …) | Entries from hidden tiers removed from the result |
+| Lookups by content: the duplicate warnings on upload (UI and API), `prop=duplicatefiles` | Tier files left out, so uploading a copy of a document does not reveal whether, or under which name, it exists in a hidden tier; this covers deleted tier files too |
 | Transclusion (`{{:Internal:Page}}`, `msgnw:`, `raw:`, `expandtemplates`, `parse`) and embedded tier files | Only allowed from a page in the same tier, so no rendered or cached page outside a tier carries its content; refused for a viewer outside the tier even when the parse names a tier page as context |
 
 The break-glass admin is a member of the `all-tiers` group and passes every
@@ -241,9 +243,7 @@ These still reveal that a page or file exists, and its title:
 - red and blue link colours, `#ifexist`, `Special:WhatLinksHere`,
   `Special:AllPages`, category listings, `Special:WantedFiles`, title
   suggestions while typing;
-- the title of a tier page or file in a link from a page the user can read;
-- the duplicate warning on upload: uploading a file identical to a tier file
-  names the tier file.
+- the title of a tier page or file in a link from a page the user can read.
 
 Files without a tier prefix are not protected beyond the login, see
 [Files](#files). Members of `MW_SYSOP_GROUPS` can reach every tier, see

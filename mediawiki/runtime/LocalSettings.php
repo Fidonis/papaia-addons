@@ -488,6 +488,92 @@ $wgHooks['SpecialPageBeforeExecute'][] = static function ( $special, $subPage ) 
 	return true;
 };
 
+# Lookups by content hash: the upload warning "this file is a duplicate of
+# ...", prop=duplicatefiles and Special:FileDuplicateSearch name every file
+# with the same content. A user outside a tier could otherwise upload a copy
+# of a document to learn whether, and under which name, it exists in the
+# tier. The local repository leaves out the files of the viewer's hidden
+# tiers; maintenance scripts (CLI) see every file.
+class PapaiaLocalRepo extends LocalRepo {
+	/** @param File[] $files */
+	private static function papaiaVisible( array $files ): array {
+		if ( MW_ENTRY_POINT === 'cli' ) {
+			return $files;
+		}
+		$user = RequestContext::getMain()->getUser();
+		return array_values( array_filter( $files, static function ( $file ) use ( $user ) {
+			$title = $file->getTitle();
+			return !$title || !papaiaIsHidden( $user, NS_FILE, $title->getDBkey() );
+		} ) );
+	}
+
+	public function findBySha1( $hash ) {
+		return self::papaiaVisible( parent::findBySha1( $hash ) );
+	}
+
+	public function findBySha1s( array $hashes ) {
+		$result = [];
+		foreach ( parent::findBySha1s( $hashes ) as $hash => $files ) {
+			$files = self::papaiaVisible( $files );
+			if ( $files ) {
+				$result[$hash] = $files;
+			}
+		}
+		return $result;
+	}
+}
+
+# $wgLocalFileRepo gets its dynamic default only after this file; the class
+# is swapped once it is set, before the first file lookup.
+$wgExtensionFunctions[] = static function () {
+	global $wgLocalFileRepo;
+	if ( ( $wgLocalFileRepo['class'] ?? null ) === LocalRepo::class ) {
+		$wgLocalFileRepo['class'] = PapaiaLocalRepo::class;
+	}
+};
+
+# The same for deleted files: the upload warning "a file with this content
+# was deleted before" names the deleted file. Special:Upload builds its
+# upload object through this hook; the action API's upload module is
+# handled in APIAfterExecute below.
+trait PapaiaUploadWarnings {
+	public function checkWarnings( $user = null ) {
+		return papaiaFilterUploadWarnings( parent::checkWarnings( $user ),
+			$user ?? RequestContext::getMain()->getUser() );
+	}
+}
+
+class PapaiaUploadFromFile extends UploadFromFile {
+	use PapaiaUploadWarnings;
+}
+
+class PapaiaUploadFromStash extends UploadFromStash {
+	use PapaiaUploadWarnings;
+}
+
+class PapaiaUploadFromUrl extends UploadFromUrl {
+	use PapaiaUploadWarnings;
+}
+
+# $className is null unless another hook claimed the request; File, Stash
+# and Url are the core handlers that check warnings.
+$wgHooks['UploadCreateFromRequest'][] = static function ( $type, &$className ) {
+	if ( $className === null && in_array( $type, [ 'File', 'Stash', 'Url' ], true ) ) {
+		$className = 'PapaiaUploadFrom' . $type;
+	}
+};
+
+/** Blanks a "duplicate-archive" warning that names a file of a hidden tier. */
+function papaiaFilterUploadWarnings( array $warnings, $user ): array {
+	$name = $warnings['duplicate-archive'] ?? '';
+	if ( is_string( $name ) && $name !== ''
+		&& papaiaIsHidden( $user, NS_FILE, str_replace( ' ', '_', $name ) )
+	) {
+		$warnings['duplicate-archive'] = '';
+	}
+	return $warnings;
+}
+
 # Action API query modules (allpages, allimages, recentchanges, logevents,
 # usercontribs, allrevisions, search, watchlist, ...): drop result entries
 # from hidden tiers after the module ran. Filtering the result rather than
@@ -531,6 +617,17 @@ $wgHooks['APIQueryAfterExecute'][] = static function ( $module ) {
 # the caller cannot read, but not revision metadata such as edit summaries.
 # Strip a hidden page down to the fields that only name it.
 $wgHooks['APIAfterExecute'][] = static function ( $module ) {
+	if ( $module->getModuleName() === 'upload' ) {
+		$warnings = $module->getResult()->getResultData( [ 'upload', 'warnings' ] );
+		if ( is_array( $warnings ) ) {
+			$filtered = papaiaFilterUploadWarnings( $warnings, $module->getUser() );
+			if ( $filtered !== $warnings ) {
+				$module->getResult()->addValue( [ 'upload' ], 'warnings', $filtered,
+					ApiResult::OVERRIDE | ApiResult::NO_SIZE_CHECK );
+			}
+		}
+		return;
+	}
 	if ( $module->getModuleName() !== 'query' ) {
 		return;
 	}

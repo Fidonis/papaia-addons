@@ -170,7 +170,7 @@ env_prompts:
   # ── Wiki — uploads ────────────────────────────────────────────────────────
   MW_ENABLE_UPLOADS:
     label: "Enable file uploads"
-    hint: "A file joins a tier through its name (File:<Tier>:<name>); others are readable by every user"
+    hint: "A file joins a tier through its name (File:<Tier>-<name>); others are readable by every user"
     type: text
     pattern: "^(true|false)$"
 

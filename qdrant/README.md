@@ -11,7 +11,7 @@ caller's roles grant.
 Use the [`qdrant-connect`](https://github.com/Fidonis/papaia-addon-qdrant-connect) add-on
 instead if you already run a Qdrant instance and only want the MCP layer.
 
-**Requires papaia ≥ 0.8.0.**
+**Requires papaia ≥ 1.3.0** (`addon_api` 2).
 
 ---
 

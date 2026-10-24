@@ -5,7 +5,7 @@ Paperless-ngx document management addon for [papaia](https://github.com/Fidonis/
 Adds Paperless-ngx with full-text search and OCR, an OIDC-secured MCP server for
 AI-assisted document access via LibreChat, and a Keycloak SSO login for Paperless users.
 
-**Requires papaia ≥ 0.8.0.**
+**Requires papaia ≥ 1.3.0** (`addon_api` 2).
 
 ---
 

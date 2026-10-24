@@ -10,7 +10,7 @@ without touching the existing Qdrant installation.
 Use the full [`qdrant`](https://github.com/Fidonis/papaia-addon-qdrant) add-on if you want papaia
 to manage the Qdrant vector database itself.
 
-**Requires papaia ≥ 0.8.0.**
+**Requires papaia ≥ 1.3.0** (`addon_api` 2).
 
 ---
 

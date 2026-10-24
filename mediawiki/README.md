@@ -506,11 +506,32 @@ Requirements, and the symptom when one is missing:
 | The LibreChat container reaches the URL -- not `localhost`, which is the container itself | `ECONNREFUSED`; the MCP container logs a warning for a `localhost` URL at start |
 | The host of the URL is in `mcpSettings.allowedDomains` | `MCPDomainNotAllowedError: Domain "https://..." is not allowed`; the server is reported unreachable |
 | LibreChat's callback is allowed | `[MCPOAuth] Failed to initiate OAuth flow` with `a redirect_uri is not permitted`; connecting fails before any sign-in page opens |
+| LibreChat holds no registration from an earlier MCP server (see [below](#after-a-reinstall)) | The browser shows *Authorization failed: unknown client_id* (`/mcp/authorize` answers 400); LibreChat's token refresh was answered with `invalid_grant` |
 
 Each user then connects once: in the chat, select the MediaWiki MCP server,
 follow the sign-in link (wiki login via Keycloak, then the consent page), and
 the tools are available. The connection lasts until the user revokes it or
 does not use it for 30 days.
+
+### After a reinstall
+
+LibreChat keeps the client registration and the refresh token it received from
+the MCP server in its own database (the `tokens` collection, identifiers
+`mcp:MediaWiki:client` and `mcp:MediaWiki:refresh`). Deleting the add-on's
+volumes (`papaia-ctl addon uninstall mediawiki --clean-up`) empties the MCP
+server's store, and the next install generates a new signing key, so the
+`client_id` LibreChat sends is unknown to the new server. Remove the stale
+records, then connect again from the MCP menu:
+
+```bash
+docker exec papaia-librechat-mongodb-1 mongosh --quiet LibreChat \
+  --eval 'db.tokens.deleteMany({identifier: /^mcp:MediaWiki:/})'
+```
+
+`papaia-librechat-mongodb-1` is `<PAPAIA_PROJECT>-librechat-mongodb-1`; `papaia`
+on a default host. This clears the stored MediaWiki sign-in of every LibreChat
+user, so each connects once more. Nothing in the add-on can do this at
+uninstall: LibreChat's database belongs to the core.
 
 Other MCP clients sign in the same way. The MCP server trusts loopback
 callbacks and those of a few hosted clients by default (see its
@@ -577,6 +598,10 @@ papaia-ctl addon uninstall mediawiki --clean-up
 `papaia-ctl backup` captures the volumes and the config bundle with the
 generated secrets; a restore brings back pages, users, groups, uploads, the
 OAuth signing keys and the MCP sign-ins.
+
+`uninstall` leaves LibreChat's side of the MCP sign-in untouched. After
+`uninstall --clean-up` and a new install, remove the stale registration there
+before connecting; see [After a reinstall](#after-a-reinstall).
 
 ---
 

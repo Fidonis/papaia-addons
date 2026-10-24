@@ -12,6 +12,7 @@ Current catalog:
 
 | Add-on | What it adds |
 |---|---|
+| `mediawiki` | A MediaWiki knowledge base with Keycloak login and group sync, namespace-level access tiers, and the MediaWiki MCP server, through which LibreChat works in the wiki as the signed-in user within the same tiers |
 | `n8n` | n8n workflow automation behind an oauth2-proxy Keycloak SSO gate — the engine is never published, and only the webhook paths bypass the gate |
 | `paperless` | Paperless-ngx document management, an OIDC/RBAC MCP server for AI-assisted document access via LibreChat, and Keycloak SSO login for Paperless users |
 | `paperless-connect` | The same MCP/Keycloak layer as `paperless`, pointed at an existing standalone Paperless-ngx instance instead of a bundled one |
@@ -39,7 +40,7 @@ papaia-addons/
 └── README.md
 ```
 
-`qdrant-ingest` additionally ships `jobs.example.yaml`, a template for the ingest job definitions the operator web interface manages. `n8n` additionally ships `nginx.conf`, the config template of its logout shim (swappable via `N8N_PROXY_CONF`).
+`qdrant-ingest` additionally ships `jobs.example.yaml`, a template for the ingest job definitions the operator web interface manages. `mediawiki` additionally ships `image/` (the build context of its wiki image, published as `ghcr.io/fidonis/papaia-mediawiki:<MediaWiki version>-<add-on version>` by the `mediawiki-image` workflow; a change there needs a new add-on version), `runtime/` (the env-driven `LocalSettings.php`, entrypoint and OAuth bootstrap, mounted read-only into the wiki container), `mcp/` (configuration and start script of the MCP server), `settings.d/` (site-specific settings) and `tests/` (the access-tier leak checks, `tests/run.sh`). `n8n` additionally ships `nginx.conf`, the config template of its logout shim (swappable via `N8N_PROXY_CONF`).
 
 ---
 
@@ -116,6 +117,7 @@ shellcheck --severity=warning <script>
 - **Shell**: `shellcheck --severity=warning` must pass; `set -euo pipefail`, prefer `[[` over `[`, quote variables
 - **Line endings**: LF everywhere, enforced via `.gitattributes`
 - **Trailing whitespace**: forbidden
+- **PHP** (`mediawiki/runtime/`): tabs, following the MediaWiki coding conventions the code extends
 - Once a Python `src/` is introduced, `ruff check .` and the license-check workflow (see below) start applying
 
 ---

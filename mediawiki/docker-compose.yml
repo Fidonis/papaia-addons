@@ -167,7 +167,7 @@ services:
   #  entrypoint to the shared credentials volume.
   # ═══════════════════════════════════════════════════════════════════════════
   mediawiki-mcp:
-    image: ${MEDIAWIKI_MCP_IMAGE:-ghcr.io/professionalwiki/mediawiki-mcp-server:0.19.0}
+    image: ${MEDIAWIKI_MCP_IMAGE:-ghcr.io/professionalwiki/mediawiki-mcp-server:0.20.0}
     restart: unless-stopped
     entrypoint: ["/bin/sh", "/papaia/mcp-start.sh"]
     environment:

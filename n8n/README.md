@@ -7,7 +7,7 @@ Builds the connective tissue between the stack and everything around it:
 scheduled jobs, webhook-triggered flows, and API calls into LiteLLM or
 LibreChat — authored in a visual editor rather than in code.
 
-**Requires papaia ≥ 1.0.0.**
+**Requires papaia ≥ 1.3.0** (`addon_api` 2).
 
 ---
 
@@ -34,9 +34,11 @@ is webhook traffic — see [Webhooks](#webhooks) below.
 | `n8n` | internal | Workflow engine and editor |
 | `n8n-db` | internal | PostgreSQL — workflows, credentials, execution history |
 
-All four run on the isolated `papaia-n8n-net` bridge network. `papaia-ctl`
-attaches `nginx-proxy-manager` to it so the editor can be published under a
-real hostname.
+All four run on the add-on's own isolated Docker bridge network,
+`${PAPAIA_PROJECT:-papaia}-n8n-net` — `papaia-n8n-net` on a default
+single-stack host, or `papaia-<env>-n8n-net` when several papAIa deployments
+share a host. `papaia-ctl` attaches `nginx-proxy-manager` to it so the editor
+can be published under a real hostname.
 
 ```
 browser ──► nginx-proxy-manager ──► n8n-auth ──► n8n-proxy ──► n8n
@@ -89,7 +91,7 @@ authorization codes delivered somewhere else.
 
 **3. One core start after the first add-on start.** The gate redeems the login
 code against Keycloak's internal name, so the manifest attaches `keycloak` and
-`nginx-proxy-manager` to `papaia-n8n-net`. papaia-ctl writes that attachment
+`nginx-proxy-manager` to the add-on network. papaia-ctl writes that attachment
 as a core override, and only a core start applies it — `addon start` brings up
 the add-on's own containers only. Skipped, every login ends in a 500 at
 `/oauth2/callback` with `lookup keycloak … no such host`.

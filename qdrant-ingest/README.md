@@ -69,6 +69,18 @@ Tika sidecar publishes nothing. For TLS and a public hostname, put an
 `nginx-proxy-manager` proxy host in front of `/ui` — see
 [Web interface](#web-interface) below.
 
+## Components
+
+The images this add-on runs. Each version is the default of its image variable; set the
+variable in `<papaia-config>/addons/qdrant-ingest/.env` to run another one.
+
+<!-- components:start -->
+| Component | Version | Role | Image variable |
+|---|---|---|---|
+| [qdrant-ingest](https://github.com/Fidonis/qdrant-ingest) | `0.3.0` | primary | `QI_INGEST_IMAGE` |
+| [Apache Tika](https://tika.apache.org) | `3.2.3.0` | sidecar | `QI_TIKA_IMAGE` |
+<!-- components:end -->
+
 ---
 
 ## How it reaches Qdrant

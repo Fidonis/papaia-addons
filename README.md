@@ -18,7 +18,10 @@ deployment.
 | [`qdrant-ingest`](qdrant-ingest/) | Scheduled multi-source document ingestion into an existing Qdrant |
 
 Each add-on directory carries its own README, `.env.example`, and
-`papaia-app.yaml` manifest. See [AGENTS.md](AGENTS.md) for the manifest
-contract and the repository's engineering conventions.
+`papaia-app.yaml` manifest. The manifest `version` counts changes to the
+add-on; the `components` list in the manifest, mirrored as a table in the
+add-on's README, names the software and versions it runs. See
+[AGENTS.md](AGENTS.md) for the manifest contract and the repository's
+engineering conventions.
 
 Maintained by [Fidonis](https://fidonis.de).

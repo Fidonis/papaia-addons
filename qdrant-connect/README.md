@@ -25,6 +25,17 @@ All services run on the add-on's own isolated Docker bridge network,
 single-stack host, or `papaia-<env>-qdrant-connect-net` when several papAIa deployments
 share a host. `papaia-ctl` resolves the same value when it generates the Seam-1 override.
 
+## Components
+
+The images this add-on runs. Each version is the default of its image variable; set the
+variable in `<papaia-config>/addons/qdrant-connect/.env` to run another one.
+
+<!-- components:start -->
+| Component | Version | Role | Image variable |
+|---|---|---|---|
+| [qdrant-mcp-rbac](https://github.com/Fidonis/qdrant-mcp-rbac) | `0.3.0` | primary | `QDRANT_MCP_IMAGE` |
+<!-- components:end -->
+
 ---
 
 ## How access control works

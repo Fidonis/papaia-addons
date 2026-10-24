@@ -24,6 +24,17 @@ default single-stack host, or `papaia-<env>-paperless-connect-net` when several 
 deployments share a host. `papaia-ctl` resolves the same value when it generates the
 Seam-1 override.
 
+## Components
+
+The images this add-on runs. Each version is the default of its image variable; set the
+variable in `<papaia-config>/addons/paperless-connect/.env` to run another one.
+
+<!-- components:start -->
+| Component | Version | Role | Image variable |
+|---|---|---|---|
+| [paperless-mcp-rbac](https://github.com/Fidonis/paperless-mcp-rbac) | `0.1.1` | primary | `PAPERLESS_MCP_IMAGE` |
+<!-- components:end -->
+
 ---
 
 ## Prerequisites

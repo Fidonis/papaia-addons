@@ -11,6 +11,18 @@ requires:
 papaia_compat: ">=0.8.0"
 description: "OIDC/RBAC MCP server for an existing standalone Qdrant instance"
 
+# The software this add-on packages. `version` above counts the add-on itself;
+# the `version` of each entry below is the default tag of its `image_var` in
+# docker-compose.yml, and tools/components.py keeps the two equal.
+components:
+  - id: qdrant-mcp-rbac
+    name: qdrant-mcp-rbac
+    role: primary
+    kind: fidonis
+    image_var: QDRANT_MCP_IMAGE
+    version: "0.3.0"
+    source: https://github.com/Fidonis/qdrant-mcp-rbac
+
 networks:
   # Resolved by papaia-ctl against the core .env, matching the add-on's own
   # compose network name. Scopes the Seam-1 bridge per deployment; a default

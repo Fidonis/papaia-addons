@@ -14,7 +14,7 @@ and [`qdrant-connect`](https://github.com/Fidonis/papaia-addon-qdrant-connect)
 add-ons deliberately leave out. It works with either of them, and with a
 Qdrant instance running somewhere else entirely.
 
-**Requires papaia ≥ 0.8.0.**
+**Requires papaia ≥ 1.3.0** (`addon_api` 2).
 
 ---
 

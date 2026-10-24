@@ -8,7 +8,7 @@ matching Keycloak client registration — without touching the existing Paperles
 Use the full [`paperless`](https://github.com/Fidonis/papaia-addon-paperless) add-on if you want
 papaia to manage the Paperless-ngx service, its database, and supporting containers.
 
-**Requires papaia ≥ 0.8.0.**
+**Requires papaia ≥ 1.3.0** (`addon_api` 2).
 
 ---
 

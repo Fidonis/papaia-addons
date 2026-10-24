@@ -20,7 +20,7 @@
 # ═══════════════════════════════════════════════════════════════════════════
 FROM docker.io/library/composer:2.8.12 AS composer
 
-FROM docker.io/library/mediawiki:1.43.11
+FROM docker.io/library/mediawiki:1.46.0
 
 ARG PLUGGABLEAUTH_REF=afec61097c7b08e0c67641cc9cb5ee27b2d627f7
 ARG OPENIDCONNECT_REF=975992f2978e11f66b1ad5fd64e005592ba2fec3

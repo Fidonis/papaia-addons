@@ -18,6 +18,7 @@ if ( !defined( 'MEDIAWIKI' ) ) {
 }
 
 use MediaWiki\MediaWikiServices;
+use MediaWiki\Title\Title;
 
 function papaiaEnv( string $name, ?string $default = null ): ?string {
 	$value = getenv( $name );
@@ -329,6 +330,26 @@ function papaiaIsHiddenEntry( $user, array $entry ): bool {
 	return papaiaIsHidden( $user, (int)$entry['ns'], $name );
 }
 
+/**
+ * Whether an API "redirects" list ([ [ 'from' => ..., 'to' => ... ], ... ])
+ * starts at a page of a tier the user cannot read.
+ */
+function papaiaStartsAtHiddenPage( $user, $redirects ): bool {
+	if ( !is_array( $redirects ) ) {
+		return false;
+	}
+	foreach ( $redirects as $key => $redirect ) {
+		if ( !is_int( $key ) || !is_array( $redirect ) ) {
+			continue;
+		}
+		$title = Title::newFromText( (string)( $redirect['from'] ?? '' ) );
+		if ( $title && papaiaIsHidden( $user, $title->getNamespace(), $title->getDBkey() ) ) {
+			return true;
+		}
+	}
+	return false;
+}
+
 # Pages in a tier namespace are guarded by Lockdown. Files carry their tier in
 # the name instead, so every action on them -- view, raw, edit, upload,
 # re-upload, move to or from, delete -- is checked here, and img_auth.php,
@@ -485,11 +506,12 @@ $wgHooks['ShowSearchHit'][] = static function (
 # page, so the namespace of a row says nothing about where it came from, and
 # a tier page's red links, categories and URLs would show up for everyone.
 # Refused to a user with a hidden tier, as a special page, as a query page
-# and as an Action API list or generator.
+# and as an Action API list or generator. BrokenRedirects and DoubleRedirects
+# print the target of every redirect, whatever the namespace of its source.
 const PAPAIA_LINK_TABLE_PAGES = [
 	'Wantedpages', 'Wantedcategories', 'Wantedtemplates', 'Wantedfiles', 'Mostlinked',
 	'Mostlinkedcategories', 'Mostlinkedtemplates', 'Mostimages', 'Categories', 'LinkSearch',
-	'PagesWithProp', 'Listredirects',
+	'PagesWithProp', 'Listredirects', 'BrokenRedirects', 'DoubleRedirects',
 ];
 # list=exturlusage and list=pageswithprop report the linking page and are
 # filtered with the other query modules below.
@@ -654,14 +676,25 @@ $wgHooks['APIAfterExecute'][] = static function ( $module ) {
 		}
 		return;
 	}
-	if ( $module->getModuleName() !== 'query' ) {
-		return;
-	}
 	$user = $module->getUser();
 	if ( !papaiaHiddenNamespaces( $user ) ) {
 		return;
 	}
 	$result = $module->getResult();
+	# redirects=1 (query, parse, purge, ...) follows a redirect without a read
+	# check on the page it starts from, and the result then names the target
+	# in place of the redirect. Dropping the entry would not help: the target
+	# page stays in the result. Refuse the request, as for a hidden page that
+	# is asked for by title.
+	foreach ( [ [ 'query', 'redirects' ], [ 'parse', 'redirects' ], [ 'redirects' ] ] as $path ) {
+		if ( papaiaStartsAtHiddenPage( $user, $result->getResultData( $path ) ) ) {
+			$module->dieWithError(
+				ApiMessage::create( 'apierror-permissiondenied-generic', 'permissiondenied' ) );
+		}
+	}
+	if ( $module->getModuleName() !== 'query' ) {
+		return;
+	}
 	$pages = $result->getResultData( [ 'query', 'pages' ] );
 	if ( !is_array( $pages ) ) {
 		return;

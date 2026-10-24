@@ -238,7 +238,8 @@ Lockdown leaves open, per viewer:
 | `Special:RecentChanges`, `Special:Watchlist`, their feeds, `Special:NewPages`, `Special:Contributions`, `Special:Log` | Entries from hidden tiers filtered out, including edit summaries and upload comments |
 | `Special:ListFiles`, `NewFiles`, `MIMESearch`, `ListDuplicatedFiles`, `FileDuplicateSearch`, `UnusedFiles`, `UncategorizedFiles` | Refused to users who cannot read every tier: these list all files with their upload comments and offer no filter |
 | Action API list modules (`recentchanges`, `allpages`, `allimages`, `logevents`, `usercontribs`, `allrevisions`, `exturlusage`, `pageswithprop`, …) | Entries from hidden tiers removed from the result |
-| Listings built from the link tables: `Special:WantedPages`, `WantedCategories`, `WantedTemplates`, `WantedFiles`, `MostLinkedPages`, `MostLinkedCategories`, `MostLinkedTemplates`, `MostLinkedFiles`, `Categories`, `LinkSearch`, `PagesWithProp`, `ListRedirects`; API `alllinks`, `alltransclusions`, `allfileusages`, `allcategories`, `allredirects` and the matching `querypage` pages | Refused to users who cannot read every tier: their entries name what a page links to, so a tier page's red links, categories, templates, redirect targets and external URLs would show up |
+| Listings built from the link tables: `Special:WantedPages`, `WantedCategories`, `WantedTemplates`, `WantedFiles`, `MostLinkedPages`, `MostLinkedCategories`, `MostLinkedTemplates`, `MostLinkedFiles`, `Categories`, `LinkSearch`, `PagesWithProp`, `ListRedirects`, `BrokenRedirects`, `DoubleRedirects`; API `alllinks`, `alltransclusions`, `allfileusages`, `allcategories`, `allredirects` and the matching `querypage` pages | Refused to users who cannot read every tier: their entries name what a page links to, so a tier page's red links, categories, templates, redirect targets and external URLs would show up |
+| Redirects followed by the API (`redirects=1` in `query`, `parse`, `purge`) | The request is refused when a redirect starts in a hidden tier: following it would name the target in place of the tier page |
 | Watchlist notification mails | Not sent for a tier page to a watcher outside its tier; anyone can watch any title, and members keep their watchlist after leaving a tier group |
 | Lookups by content: the duplicate warnings on upload (UI and API), `prop=duplicatefiles` | Tier files left out, so uploading a copy of a document does not reveal whether, or under which name, it exists in a hidden tier; this covers deleted tier files too |
 | Transclusion (`{{:Internal:Page}}`, `msgnw:`, `raw:`, `expandtemplates`, `parse`) and embedded tier files | Only allowed from a page in the same tier, so no rendered or cached page outside a tier carries its content; refused for a viewer outside the tier even when the parse names a tier page as context |
@@ -540,7 +541,7 @@ markers in content, summaries, upload comments, file bytes, link targets,
 categories, templates, external links and sort keys, and the outsider then
 requests every path listed under [What is protected](#what-is-protected) --
 browser, feeds, logs, search, Action API, REST API, revision and page ids,
-edit forms, link-table listings, `img_auth.php`, thumbnails, the watchlist
+edit forms, link-table listings, redirect following, `img_auth.php`, thumbnails, the watchlist
 and its notification mails -- and tries to upload, overwrite, edit, create,
 move and transclude into or from the tier.
 No response may carry a marker. The member and the break-glass admin are

@@ -269,6 +269,12 @@ def main() -> int:
     ext_host = f"zqxext{run}.example.org"
     markers = [m_content, m_summary, m_upload, m_filedesc, m_talk, m_tiertalk,
                m_ext, m_red, m_cat, m_tpl, m_wanted, m_sort, m_mail, m_redir]
+    # Titles of public pages that only a tier redirect points at. They show up
+    # in listings of public pages, so they are checked in the redirect section
+    # only, not against every response like the markers above.
+    m_target = f"ZQXTARGET{run}"
+    m_hop = f"ZQXHOP{run}"
+    redirect_markers = [m_redir, m_target, m_hop]
     checks = Checks()
 
     # ── Seed, as the tier member ───────────────────────────────────────────
@@ -300,6 +306,13 @@ def main() -> int:
     )
     member.edit(f"{TIER} talk:Plan", f"Tier talk {m_tiertalk}", f"tier talk {m_summary}")
     member.edit(f"{TIER}:Shortcut", f"#REDIRECT [[{m_redir}]]", "tier redirect")
+    # Tier redirects to pages that exist: following one names the target, and
+    # the target takes the redirect's place in the page set. The third one
+    # makes a double redirect (tier page -> public redirect -> public page).
+    member.edit(m_target, "Public target.", "public redirect target")
+    rev_shortcut2 = member.edit(f"{TIER}:Shortcut2", f"#REDIRECT [[{m_target}]]", "tier redirect to a public page")
+    member.edit(m_hop, "#REDIRECT [[Early public page]]", "public redirect")
+    member.edit(f"{TIER}:Shortcut3", f"#REDIRECT [[{m_hop}]]", "tier redirect to a public redirect")
     pub_rev = member.edit(
         PUBLIC_PAGE,
         f"Public text.\n\n{{{{:{PAGE}}}}}\n\n[[File:{FILE}|50px]]\n\n[[Media:{FILE}]]",
@@ -359,6 +372,14 @@ def main() -> int:
     checks.ok("admin sees the tier redirect's target in list=allredirects", m_redir in body)
     _, body, _ = member.request("/index.php", {"title": f"{TIER} talk:Plan"})
     checks.ok("member reads the tier talk page", m_tiertalk in body)
+    _, body, _ = member.api({"action": "query", "titles": f"{TIER}:Shortcut2", "redirects": "1"})
+    checks.ok("member sees the tier redirect followed by action=query", m_target in body, body[:300])
+    _, body, _ = member.api({"action": "parse", "page": f"{TIER}:Shortcut2", "redirects": "1", "prop": "text"})
+    checks.ok("member sees the tier redirect followed by action=parse", m_target in body, body[:300])
+    _, body, _ = admin.request("/index.php", {"title": "Special:BrokenRedirects", "limit": "500"})
+    checks.ok("admin sees the tier redirect in Special:BrokenRedirects", m_redir in body)
+    _, body, _ = admin.request("/index.php", {"title": "Special:DoubleRedirects", "limit": "500"})
+    checks.ok("admin sees the tier double redirect in Special:DoubleRedirects", m_hop in body)
 
     # ── Outsider ───────────────────────────────────────────────────────────
     out = Client(args.base)
@@ -553,6 +574,29 @@ def main() -> int:
     checks.no_leak("Special:LinkSearch", wiki("Special:LinkSearch", target=ext_host), markers)
     checks.no_leak("Special:LinkSearch, all", wiki("Special:LinkSearch", target="*.example.org"), markers)
     checks.no_leak("Special:PagesWithProp", wiki("Special:PagesWithProp", propname="defaultsort"), markers)
+
+    print("\nRedirects of tier pages")
+    # redirects=1 follows a redirect without a read check, reports where it
+    # leads and puts the target in the result instead of the redirect.
+    for shortcut in ("Shortcut", "Shortcut2", "Shortcut3"):
+        checks.no_leak(f"action=query follows {TIER}:{shortcut}", api(
+            action="query", titles=f"{TIER}:{shortcut}", redirects="1"), redirect_markers)
+    checks.no_leak("action=query follows a tier redirect, lower case", api(
+        action="query", titles=f"{TIER.lower()}:Shortcut2", redirects="1"), redirect_markers)
+    checks.no_leak("action=query follows a tier redirect by revision id", api(
+        action="query", revids=rev_shortcut2, redirects="1"), redirect_markers)
+    checks.no_leak("action=query follows the redirects of a generator", api(
+        action="query", generator="allpages", gapnamespace="3002", redirects="1"), redirect_markers)
+    checks.no_leak("action=parse follows a tier redirect", api(
+        action="parse", page=f"{TIER}:Shortcut2", redirects="1"), redirect_markers)
+    _, body, _ = out.api({"action": "purge", "titles": f"{TIER}:Shortcut2", "redirects": "1"}, post=True)
+    checks.no_leak("action=purge follows a tier redirect", body, redirect_markers)
+    for special in ("BrokenRedirects", "DoubleRedirects"):
+        checks.no_leak(f"Special:{special}", wiki(f"Special:{special}", limit="500"), redirect_markers)
+        checks.no_leak(f"list=querypage {special}", api(
+            action="query", list="querypage", qppage=special, qplimit="max"), redirect_markers)
+    _, body, _ = out.api({"action": "query", "titles": m_hop, "redirects": "1"})
+    checks.ok("a public redirect is still followed", "Early public page" in body and "redirects" in body, body[:300])
 
     print("\nWatchlist")
     mail = MailCatcher(args.mail_api) if args.mail_api else None

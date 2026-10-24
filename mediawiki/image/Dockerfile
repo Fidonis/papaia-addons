@@ -18,7 +18,7 @@
 # without a new image. A change in this directory needs a new image tag:
 # <MediaWiki version>-<add-on version>, see papaia-app.yaml.
 # ═══════════════════════════════════════════════════════════════════════════
-FROM docker.io/library/composer:2.8.12 AS composer
+FROM docker.io/library/composer:2.10.2 AS composer
 
 FROM docker.io/library/mediawiki:1.43.11
 

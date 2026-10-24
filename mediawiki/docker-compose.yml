@@ -130,7 +130,7 @@ services:
   #  which the image creates on first start.
   # ═══════════════════════════════════════════════════════════════════════════
   mediawiki-db:
-    image: ${MEDIAWIKI_DB_IMAGE:-docker.io/library/mariadb:11.8.9}
+    image: ${MEDIAWIKI_DB_IMAGE:-docker.io/library/mariadb:13.0.2}
     restart: unless-stopped
     environment:
       MARIADB_DATABASE:             ${MW_DB_NAME:-mediawiki}

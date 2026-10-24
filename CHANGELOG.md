@@ -23,7 +23,7 @@ based on merged pull requests; this file mirrors the published releases.
   the `mediawiki-image` workflow. Requires papaia ≥ 1.3.0.
 - **n8n add-on** (`1.0.0`): n8n workflow automation behind an oauth2-proxy
   Keycloak SSO gate. The engine is never published; only the webhook paths
-  bypass the gate. The add-on ships no MCP server. Requires papaia ≥ 1.0.0.
+  bypass the gate. The add-on ships no MCP server. Requires papaia ≥ 1.3.0.
 - **`components` list in every add-on manifest**, naming the software an
   add-on bundles next to its own `version`. `tools/components.py` keeps the
   list equal to the image tags in `docker-compose.yml`, mirrors it into the
@@ -42,7 +42,8 @@ based on merged pull requests; this file mirrors the published releases.
   `requires.addon_api: 2` and need papaia ≥ 1.3.0, the first core serving
   that generation (`papaia_compat` and each README now say so). A default
   single-stack host keeps the name `papaia-<add-on>-net`, so nothing has to
-  be migrated there. `mediawiki` is built the same way.
+  be migrated there. The new `mediawiki` and `n8n` add-ons are built the same
+  way.
 - **qdrant-ingest** publishes its control-plane port by default, like the
   other add-ons: `HOST_IP:QI_EXT_PORT:8300` (`QI_EXT_PORT` defaults to `8300`,
   the host falls back to loopback when `HOST_IP` is unset). REST, MCP and the

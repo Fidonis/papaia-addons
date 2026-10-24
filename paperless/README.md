@@ -13,7 +13,7 @@ AI-assisted document access via LibreChat, and a Keycloak SSO login for Paperles
 
 | Service | Port | Description |
 |---|---|---|
-| `paperless` | `8010` (configurable) | Paperless-ngx 3.0.5 web UI and API |
+| `paperless` | `8010` (configurable) | Paperless-ngx web UI and API |
 | `paperless-mcp` | internal | OIDC/RBAC-secured MCP server for LibreChat |
 | `paperless-broker` | internal | Valkey task broker |
 | `paperless-db` | internal | PostgreSQL database |
@@ -25,6 +25,22 @@ All services run on the add-on's own isolated Docker bridge network,
 single-stack host, or `papaia-<env>-paperless-net` when several papAIa deployments
 share a host. `papaia-ctl` resolves the same value when it generates the Seam-1
 override.
+
+## Components
+
+The images this add-on runs. Each version is the default of its image variable; set the
+variable in `<papaia-config>/addons/paperless/.env` to run another one.
+
+<!-- components:start -->
+| Component | Version | Role | Image variable |
+|---|---|---|---|
+| [Paperless-ngx](https://github.com/paperless-ngx/paperless-ngx) | `3.0.5` | primary | `PAPERLESS_IMAGE` |
+| [paperless-mcp-rbac](https://github.com/Fidonis/paperless-mcp-rbac) | `0.1.1` | primary | `PAPERLESS_MCP_IMAGE` |
+| [Valkey](https://github.com/valkey-io/valkey) | `9-alpine` (floating) | sidecar | `PAPERLESS_REDIS_IMAGE` |
+| [PostgreSQL](https://www.postgresql.org) | `18` (floating) | sidecar | `PAPERLESS_DB_IMAGE` |
+| [Gotenberg](https://github.com/gotenberg/gotenberg) | `8.34` (floating) | sidecar | `PAPERLESS_GOTENBERG_IMAGE` |
+| [Apache Tika](https://tika.apache.org) | `3.2.3.0` | sidecar | `PAPERLESS_TIKA_IMAGE` |
+<!-- components:end -->
 
 ---
 

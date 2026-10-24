@@ -29,6 +29,18 @@ host, or `papaia-<env>-qdrant-net` when several papAIa deployments share a host.
 published Qdrant port is the ingestion and administration path; there is no public
 ingress.
 
+## Components
+
+The images this add-on runs. Each version is the default of its image variable; set the
+variable in `<papaia-config>/addons/qdrant/.env` to run another one.
+
+<!-- components:start -->
+| Component | Version | Role | Image variable |
+|---|---|---|---|
+| [Qdrant](https://github.com/qdrant/qdrant) | `v1.19.0` | primary | `QDRANT_IMAGE` |
+| [qdrant-mcp-rbac](https://github.com/Fidonis/qdrant-mcp-rbac) | `0.3.0` | primary | `QDRANT_MCP_IMAGE` |
+<!-- components:end -->
+
 ---
 
 ## How access control works

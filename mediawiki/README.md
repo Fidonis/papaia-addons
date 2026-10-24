@@ -68,7 +68,7 @@ MCP server, so one host name, certificate and proxy entry serve both.
 image plus PluggableAuth, OpenIDConnect, Lockdown and OAuth, each pinned to a
 commit, and the Apache configuration. It is published as
 `ghcr.io/fidonis/papaia-mediawiki:<MediaWiki version>-<add-on version>`
-(currently `1.43.11-1.0.0`), the tag `docker-compose.yml` pulls by default.
+(the current tag is in the Components table below), the tag `docker-compose.yml` pulls by default.
 
 The add-on logic is not baked in: `runtime/` (the environment-driven
 `LocalSettings.php` with the tier hooks, the entrypoint and the OAuth
@@ -81,6 +81,19 @@ When the image cannot be pulled, Docker Compose builds it from `image/`
 instead. That needs internet access and takes several minutes; if an
 automatic start after install gives up during the build, start the add-on
 again once the build has finished.
+
+## Components
+
+The images this add-on runs. Each version is the default of its image variable; set the
+variable in `<papaia-config>/addons/mediawiki/.env` to run another one.
+
+<!-- components:start -->
+| Component | Version | Role | Image variable |
+|---|---|---|---|
+| [MediaWiki](https://github.com/Fidonis/papaia-addons/tree/main/mediawiki/image) | `1.43.11-1.0.0` | primary | `MEDIAWIKI_IMAGE` |
+| [MediaWiki MCP Server](https://github.com/ProfessionalWiki/MediaWiki-MCP-Server) | `0.19.0` | primary | `MEDIAWIKI_MCP_IMAGE` |
+| [MariaDB](https://mariadb.org) | `11.8.9` | sidecar | `MEDIAWIKI_DB_IMAGE` |
+<!-- components:end -->
 
 ---
 

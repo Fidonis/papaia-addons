@@ -12,6 +12,41 @@ requires:
 papaia_compat: ">=1.0.0"
 description: "n8n workflow automation behind a Keycloak SSO gate"
 
+# The software this add-on packages. `version` above counts the add-on itself;
+# the `version` of each entry below is the default tag of its `image_var` in
+# docker-compose.yml, and tools/components.py keeps the two equal.
+components:
+  - id: n8n
+    name: n8n
+    role: primary
+    kind: upstream
+    image_var: N8N_IMAGE
+    version: "2.36.6"
+    source: https://github.com/n8n-io/n8n
+  - id: oauth2-proxy
+    name: oauth2-proxy
+    role: sidecar
+    kind: upstream
+    image_var: N8N_OAUTH2_PROXY_IMAGE
+    version: "v7.15.3"
+    source: https://github.com/oauth2-proxy/oauth2-proxy
+  - id: nginx
+    name: nginx
+    role: sidecar
+    kind: upstream
+    image_var: N8N_PROXY_IMAGE
+    version: "1.31-alpine"
+    source: https://nginx.org
+    pinned: false
+  - id: postgres
+    name: PostgreSQL
+    role: sidecar
+    kind: upstream
+    image_var: N8N_DB_IMAGE
+    version: "18"
+    source: https://www.postgresql.org
+    pinned: false
+
 networks:
   app_network: papaia-n8n-net
   # keycloak is required, not optional: the SSO gate exchanges the auth code

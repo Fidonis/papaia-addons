@@ -37,6 +37,9 @@ papaia-addons/
 │       ├── infra/keycloak/*.json        # Client export(s) + audience mapper(s), imported on install
 │       ├── ai/librechat/librechat.yaml  # MCP server registration for LibreChat
 │       └── infra/nginx/*.conf           # Optional vhost fragment (public-facing add-ons only)
+├── tools/
+│   ├── components.py          # Keeps component versions, .env.example and README tables equal to Compose
+│   └── test_components.py     # Unit tests for it
 └── README.md
 ```
 
@@ -54,6 +57,7 @@ Every add-on manifest carries the same shape:
 | `requires.addon_api` | The contract generation this add-on is built against; checked against the core's supported window by cores that read it |
 | `papaia_compat` | SemVer-range fallback (`>=x.y.z`) for cores that don't read `requires` yet |
 | `description` | One-line summary, shown in installer UIs |
+| `components[]` | The software this add-on packages, next to `version`, which counts the add-on bundle itself. Per entry: `id`, `name`, `role` (`primary`\|`sidecar`), `kind` (`upstream`\|`fidonis`), `image_var` (the Compose variable whose default names the image), `version` (that default's tag, quoted), `source` (https URL) and, for a floating tag only, `pinned: false`. The Compose default is the source of truth; `tools/components.py` keeps `version`, the image lines of `.env.example` and the README table equal to it. Consumers such as papaia-manager read it to show what an add-on runs |
 | `networks.app_network` | The Docker network name this add-on's own services join. May be a literal, or (with `requires.addon_api: 2`) a `${PAPAIA_PROJECT:-papaia}-<name>-net` template that `papaia-ctl` resolves against the core `.env` so the bridge is scoped per deployment — use the identical string in the add-on's own compose `networks.<key>.name` |
 | `networks.attach` | Core services this add-on's containers additionally attach to. Validated against the core's own Compose services — an add-on cannot list another add-on here |
 | `local_ca_env` | Per-service list of env vars pointing at the bundled Keycloak CA cert (mounted from `$PAPAIA_CONFIG_DIR/certs`); `papaia-ctl` clears them via a generated override when `auth_provider=external_oidc`, so the add-on falls back to the system CA bundle instead of failing on a missing cert |
@@ -118,13 +122,26 @@ shellcheck --severity=warning <script>
 - **Line endings**: LF everywhere, enforced via `.gitattributes`
 - **Trailing whitespace**: forbidden
 - **PHP** (`mediawiki/runtime/`): tabs, following the MediaWiki coding conventions the code extends
+- **Component versions**: `python tools/components.py check` must pass; after changing an image tag in a Compose file, run `python tools/components.py fix` instead of editing the manifest, `.env.example` and README by hand. The unit tests run with `python -m unittest discover -s tools`
 - Once a Python `src/` is introduced, `ruff check .` and the license-check workflow (see below) start applying
 
 ---
 
 ## Versioning & releases
 
-- Semantic Versioning; tags follow `vX.Y.Z`.
+- Semantic Versioning; tags follow `vX.Y.Z` and mark a snapshot of the whole catalog.
+- Each add-on carries its own SemVer `version` in its manifest, independent of the catalog tag. It says *that* the add-on changed; the `components` list says *what* it runs. Versions are bumped in the release-cut PR, not in feature PRs, by these rules:
+
+  | Change since the last release | Bump |
+  |---|---|
+  | Component patch or minor update without a configuration change | patch |
+  | New env variables, manifest or integration changes, new user-facing behaviour | minor |
+  | Component major update, data migration, or any breaking change to env, manifest or integration | major |
+  | Documentation only | none |
+
+  An add-on whose image tag embeds the add-on version (`mediawiki`) takes the new tag from the same bump.
+- At release-cut time, `python tools/components.py release-check --from <last tag>` fails for an add-on that changed without a version bump, or whose version moved without a change; `python tools/components.py report --from <last tag>` prints the add-on and component matrix for `CHANGELOG.md` and the release notes.
+- Pin policy: primary and Fidonis components use an exact tag (`3.0.5`, not `3` or `latest`). A sidecar may use a floating tag (`postgres:18`) only when its component entry says `pinned: false`, so the table shows that the deployed version depends on the pull date.
 - `CHANGELOG.md` follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); it is updated by hand in a dedicated `docs:` PR at release-cut time, not by every feature/fix PR.
 - [release-drafter](https://github.com/release-drafter/release-drafter) auto-drafts GitHub Release notes from merged PR titles on every push to `main`; publishing that draft is what creates the release tag.
 

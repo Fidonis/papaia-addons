@@ -45,6 +45,20 @@ browser ──► nginx-proxy-manager ──► n8n-auth ──► n8n-proxy ─
                                     Keycloak                  n8n-db
 ```
 
+## Components
+
+The images this add-on runs. Each version is the default of its image variable; set the
+variable in `<papaia-config>/addons/n8n/.env` to run another one.
+
+<!-- components:start -->
+| Component | Version | Role | Image variable |
+|---|---|---|---|
+| [n8n](https://github.com/n8n-io/n8n) | `2.36.6` | primary | `N8N_IMAGE` |
+| [oauth2-proxy](https://github.com/oauth2-proxy/oauth2-proxy) | `v7.15.3` | sidecar | `N8N_OAUTH2_PROXY_IMAGE` |
+| [nginx](https://nginx.org) | `1.31-alpine` (floating) | sidecar | `N8N_PROXY_IMAGE` |
+| [PostgreSQL](https://www.postgresql.org) | `18` (floating) | sidecar | `N8N_DB_IMAGE` |
+<!-- components:end -->
+
 ---
 
 ## Install

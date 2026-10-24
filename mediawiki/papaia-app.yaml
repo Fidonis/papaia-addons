@@ -12,6 +12,32 @@ requires:
 papaia_compat: ">=1.3.0"
 description: "MediaWiki knowledge base with access tiers + MCP server with per-user sign-in"
 
+# The software this add-on packages. `version` above counts the add-on itself;
+# the `version` of each entry below is the default tag of its `image_var` in
+# docker-compose.yml, and tools/components.py keeps the two equal.
+components:
+  - id: mediawiki
+    name: MediaWiki
+    role: primary
+    kind: fidonis
+    image_var: MEDIAWIKI_IMAGE
+    version: "1.43.11-1.0.0"
+    source: https://github.com/Fidonis/papaia-addons/tree/main/mediawiki/image
+  - id: mediawiki-mcp-server
+    name: MediaWiki MCP Server
+    role: primary
+    kind: upstream
+    image_var: MEDIAWIKI_MCP_IMAGE
+    version: "0.19.0"
+    source: https://github.com/ProfessionalWiki/MediaWiki-MCP-Server
+  - id: mariadb
+    name: MariaDB
+    role: sidecar
+    kind: upstream
+    image_var: MEDIAWIKI_DB_IMAGE
+    version: "11.8.9"
+    source: https://mariadb.org
+
 networks:
   # Resolved by papaia-ctl against the core .env, matching the add-on's own
   # compose network name. Scopes the Seam-1 bridge per deployment; a default

@@ -1,0 +1,232 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# papaia-addon-mediawiki — Docker Compose
+# by Fidonis GmbH · https://fidonis.de
+#
+# A MediaWiki knowledge base with Keycloak login, namespace-level access
+# tiers, and the MediaWiki MCP server, through which LibreChat and other MCP
+# clients work in the wiki as the signed-in user, within the same tiers.
+#
+# All services run on the isolated ${PAPAIA_PROJECT:-papaia}-mediawiki-net
+# bridge. papaia-ctl generates a compose override that attaches nginx to it
+# (Seam 1). Only the wiki is published on a host port, over https; it also
+# serves the MCP server under <MW_SERVER>/mcp.
+#
+# The ${...} values below are interpolated from the add-on .env, materialized
+# next to this file from the config bundle by `papaia-ctl addon start
+# mediawiki`. No service loads that file wholesale: each container receives
+# only the variables in its own block, so the MCP server never sees the
+# database or admin password, and the wiki never sees the MCP signing key.
+# ═══════════════════════════════════════════════════════════════════════════
+services:
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  #  MEDIAWIKI — wiki engine (Apache + PHP)
+  #
+  #  The image (image/Dockerfile) bakes in PluggableAuth, OpenIDConnect,
+  #  Lockdown and OAuth. The add-on logic -- the env-driven LocalSettings.php,
+  #  the entrypoint and the OAuth bootstrap -- is mounted read-only from
+  #  runtime/, so an add-on update reaches an existing install on the next
+  #  start without a new image. The entrypoint installs or updates the schema,
+  #  creates the local admin and the MCP server's OAuth consumer and provides
+  #  the TLS certificate before Apache starts. Apache proxies /mcp to the MCP
+  #  server.
+  #
+  #  The published port speaks https (certificate from the papaia local CA,
+  #  self-signed without one); port 80 serves the reverse proxy on the add-on
+  #  network.
+  #
+  #  extra_hosts lets the container reach Keycloak's browser-facing issuer
+  #  URL on Linux hosts for the server-side half of the OIDC login.
+  # ═══════════════════════════════════════════════════════════════════════════
+  mediawiki:
+    # <MediaWiki version>-<add-on version>: a new add-on version that changes
+    # image/ publishes a new tag, so a cached image is never mistaken for it.
+    image: ${MEDIAWIKI_IMAGE:-ghcr.io/fidonis/papaia-mediawiki:1.43.11-1.0.0}
+    # Used when the image cannot be pulled: compose builds it from the
+    # add-on's own Dockerfile instead (needs internet, takes minutes).
+    build:
+      context: ./image
+    restart: unless-stopped
+    entrypoint: ["/bin/bash", "/usr/local/share/papaia-mediawiki/entrypoint.sh"]
+    # Setting the entrypoint drops the image's default command.
+    command: ["apache2-foreground"]
+    environment:
+      MW_SITE_NAME:               ${MW_SITE_NAME:-Wiki}
+      MW_SERVER:                  ${MW_SERVER}
+      MW_LANG:                    ${MW_LANG:-en}
+      MW_TIMEZONE:                ${MW_TIMEZONE:-Europe/Berlin}
+      MW_SECRET_KEY:              ${MW_SECRET_KEY}
+      MW_UPGRADE_KEY:             ${MW_UPGRADE_KEY}
+      MW_DB_HOST:                 mediawiki-db
+      MW_DB_NAME:                 ${MW_DB_NAME:-mediawiki}
+      MW_DB_USER:                 ${MW_DB_USER:-mediawiki}
+      MW_DB_PASSWORD:             ${MW_DB_PASSWORD}
+      MW_ADMIN_USER:              ${MW_ADMIN_USER:-Admin}
+      MW_ADMIN_PASSWORD:          ${MW_ADMIN_PASSWORD}
+      MW_ENABLE_LOCAL_LOGIN:      ${MW_ENABLE_LOCAL_LOGIN:-false}
+      MW_AUTO_LOGIN:              ${MW_AUTO_LOGIN:-true}
+      MW_LOGIN_BUTTON_LABEL:      ${MW_LOGIN_BUTTON_LABEL:-Log in with Keycloak}
+      MW_DEBUG:                   ${MW_DEBUG:-false}
+      # Access tiers — format in .env.example and README, "Access tiers".
+      MW_NAMESPACES:              ${MW_NAMESPACES:-}
+      MW_NAMESPACE_READ_GROUPS:   ${MW_NAMESPACE_READ_GROUPS:-}
+      MW_SYSOP_GROUPS:            ${MW_SYSOP_GROUPS:-}
+      # Mail — off while MW_SMTP_HOST is empty.
+      MW_SMTP_HOST:               ${MW_SMTP_HOST:-}
+      MW_EMAIL_FROM:              ${MW_EMAIL_FROM:-wiki@localhost}
+      MW_ENABLE_UPLOADS:          ${MW_ENABLE_UPLOADS:-true}
+      MW_FILE_EXTENSIONS:         ${MW_FILE_EXTENSIONS:-png,gif,jpg,jpeg,webp,pdf}
+      MW_MAX_UPLOAD_MB:           ${MW_MAX_UPLOAD_MB:-50}
+      # OIDC via Keycloak. OIDC_ISSUER must be the browser-facing URL so the
+      # iss claim matches; the container reaches it through extra_hosts.
+      OIDC_ISSUER:                ${OIDC_ISSUER}
+      OIDC_GROUPS_CLAIM:          ${OIDC_GROUPS_CLAIM:-groups}
+      MW_OIDC_CLIENT_ID:          ${MW_OIDC_CLIENT_ID:-mediawiki}
+      KC_MEDIAWIKI_CLIENT_SECRET: ${KC_MEDIAWIKI_CLIENT_SECRET}
+      MW_OIDC_MIGRATE_BY_EMAIL:   ${MW_OIDC_MIGRATE_BY_EMAIL:-false}
+      # The MCP server's public URL; its OAuth callback is derived from it.
+      MEDIAWIKI_MCP_PUBLIC_URL:   ${MEDIAWIKI_MCP_PUBLIC_URL:-${MW_SERVER}/mcp}
+      MEDIAWIKI_MCP_GRANTS:       ${MEDIAWIKI_MCP_GRANTS:-basic,editpage,createeditmovepage,uploadfile,uploadeditmovefile}
+      # CA cert for the OIDC calls — trusts the bundled Keycloak self-signed
+      # cert. Cleared to "" via overrides/addons/ when auth_provider=external_oidc.
+      MW_OIDC_CA_FILE:            /certs/local-ca.crt
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      mediawiki-db:
+        condition: service_healthy
+    ports:
+      - "${HOST_IP:-0.0.0.0}:${MEDIAWIKI_EXT_PORT:-8020}:443"
+    volumes:
+      - ./runtime:/usr/local/share/papaia-mediawiki:ro
+      - ${PAPAIA_CONFIG_DIR}/certs:/certs:ro
+      - mediawiki-images:/var/www/html/images
+      - mediawiki-oauth:/var/lib/papaia-mediawiki-oauth
+      - mediawiki-mcp-credentials:/var/lib/papaia-mediawiki-mcp
+      - mediawiki-tls:/var/lib/papaia-mediawiki-tls
+      # Optional site-specific settings (*.php), loaded after the add-on's own.
+      - ${MW_SETTINGS_DIR:-./settings.d}:/etc/papaia-mediawiki/settings.d:ro
+    networks:
+      - papaia-mediawiki-net
+    healthcheck:
+      # api.php answers 200 even on a private wiki (with a readapidenied
+      # error body), which is all a liveness probe needs.
+      test:
+        - CMD-SHELL
+        - "curl -fsS -o /dev/null http://127.0.0.1/api.php"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      # The first start installs the schema before Apache comes up.
+      start_period: 180s
+    labels:
+      de.fidonis.module: papaia-mediawiki
+      de.fidonis.role: webserver
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  #  DATABASE — MariaDB
+  #
+  #  No root password is kept: MediaWiki only needs its own database user,
+  #  which the image creates on first start.
+  # ═══════════════════════════════════════════════════════════════════════════
+  mediawiki-db:
+    image: ${MEDIAWIKI_DB_IMAGE:-docker.io/library/mariadb:11.8.9}
+    restart: unless-stopped
+    environment:
+      MARIADB_DATABASE:             ${MW_DB_NAME:-mediawiki}
+      MARIADB_USER:                 ${MW_DB_USER:-mediawiki}
+      MARIADB_PASSWORD:             ${MW_DB_PASSWORD}
+      MARIADB_RANDOM_ROOT_PASSWORD: "yes"
+      MARIADB_AUTO_UPGRADE:         "1"
+    volumes:
+      - mediawiki-dbdata:/var/lib/mysql
+    networks:
+      - papaia-mediawiki-net
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    labels:
+      de.fidonis.module: papaia-mediawiki
+      de.fidonis.role: database
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  #  MCP SERVER — MediaWiki MCP Server (ProfessionalWiki)
+  #
+  #  Runs its built-in OAuth 2.1 authorization server in front of the wiki's
+  #  OAuth consumer: an MCP client (LibreChat) discovers it, the user signs in
+  #  to the wiki in the browser (Keycloak) and consents once, and every tool
+  #  call then runs as that wiki user. The wiki enforces the access tiers;
+  #  the MCP server holds no access rules of its own.
+  #
+  #  Reached through the wiki's origin (<MW_SERVER>/mcp, proxied by Apache),
+  #  so its public URL is <MW_SERVER>/mcp unless MEDIAWIKI_MCP_PUBLIC_URL
+  #  says otherwise. The server requires https for it unless the host is
+  #  localhost. The consumer credentials are written by the wiki's
+  #  entrypoint to the shared credentials volume.
+  # ═══════════════════════════════════════════════════════════════════════════
+  mediawiki-mcp:
+    image: ${MEDIAWIKI_MCP_IMAGE:-ghcr.io/professionalwiki/mediawiki-mcp-server:0.19.0}
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "/papaia/mcp-start.sh"]
+    environment:
+      MW_SITE_NAME:                ${MW_SITE_NAME:-Wiki}
+      MW_SERVER:                   ${MW_SERVER}
+      MCP_PUBLIC_URL:              ${MEDIAWIKI_MCP_PUBLIC_URL:-${MW_SERVER}/mcp}
+      # Signs the tokens the MCP server issues and encrypts its session
+      # store; rotating it signs every user out.
+      MCP_OAUTH_JWT_SIGNING_KEY:   ${MEDIAWIKI_MCP_SIGNING_KEY}
+      # OAuth callbacks of the MCP clients allowed to sign in, comma-separated
+      # (LibreChat: <DOMAIN_SERVER>/api/mcp/MediaWiki/oauth/callback).
+      MCP_OAUTH_ALLOWED_REDIRECTS: ${MEDIAWIKI_MCP_ALLOWED_REDIRECTS:-}
+      MCP_ALLOWED_ORIGINS:         ${MEDIAWIKI_MCP_ALLOWED_ORIGINS:-}
+      # The wiki is reached on the add-on network, which the outbound SSRF
+      # guard refuses unless listed.
+      MCP_TRUSTED_HOSTS:           mediawiki
+      MCP_LOG_LEVEL:               ${MEDIAWIKI_MCP_LOG_LEVEL:-info}
+      CONFIG:                      /papaia/config.json
+    depends_on:
+      mediawiki:
+        condition: service_healthy
+    volumes:
+      - ./mcp/config.json:/papaia/config.json:ro
+      - ./mcp/mcp-start.sh:/papaia/mcp-start.sh:ro
+      - mediawiki-mcp-credentials:/papaia/credentials:ro
+      - mediawiki-mcp-data:/app/data
+    networks:
+      - papaia-mediawiki-net
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "require('http').get('http://127.0.0.1:8080/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    labels:
+      de.fidonis.module: papaia-mediawiki
+      de.fidonis.role: mcp-server
+
+networks:
+  papaia-mediawiki-net:
+    driver: bridge
+    # Scoped to the deployment so multiple papAIa stacks can share a host;
+    # papaia-ctl resolves the same value when it generates the Seam-1 override.
+    # A default single-stack host keeps the name papaia-mediawiki-net.
+    name: ${PAPAIA_PROJECT:-papaia}-mediawiki-net
+
+volumes:
+  mediawiki-dbdata:
+  mediawiki-images:
+  # OAuth 2.0 signing key pair (wiki only).
+  mediawiki-oauth:
+  # OAuth consumer credentials, written by the wiki, read by the MCP server.
+  mediawiki-mcp-credentials:
+  # The MCP server's encrypted session store; keeps users signed in across
+  # restarts.
+  mediawiki-mcp-data:
+  # Key pair of the published https port.
+  mediawiki-tls:

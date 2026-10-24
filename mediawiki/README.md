@@ -91,7 +91,7 @@ variable in `<papaia-config>/addons/mediawiki/.env` to run another one.
 | Component | Version | Role | Image variable |
 |---|---|---|---|
 | [MediaWiki](https://github.com/Fidonis/papaia-addons/tree/main/mediawiki/image) | `1.43.11-1.0.0` | primary | `MEDIAWIKI_IMAGE` |
-| [MediaWiki MCP Server](https://github.com/ProfessionalWiki/MediaWiki-MCP-Server) | `0.19.0` | primary | `MEDIAWIKI_MCP_IMAGE` |
+| [MediaWiki MCP Server](https://github.com/ProfessionalWiki/MediaWiki-MCP-Server) | `0.20.0` | primary | `MEDIAWIKI_MCP_IMAGE` |
 | [MariaDB](https://mariadb.org) | `11.8.9` | sidecar | `MEDIAWIKI_DB_IMAGE` |
 <!-- components:end -->
 

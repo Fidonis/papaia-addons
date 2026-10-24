@@ -13,10 +13,11 @@
 # instance. The instances are declared as named connections in connections.yaml
 # (managed from the web interface), not in this file.
 #
-# There is no published host port: this is a control plane, not a data plane.
-# See the commented ports: block below. The web interface is reachable only
-# once nginx-proxy-manager is attached and a proxy host is configured for
-# /ui — see integration/infra/nginx/qdrant-ingest.conf.
+# The ingester publishes one host port (QI_EXT_PORT, default 8300) on HOST_IP:
+# REST, MCP and the web interface all share it. This is a control plane, not a
+# data plane, so HOST_IP falls back to loopback when it is not set — see the
+# ports: block below. For TLS and a public hostname, put an nginx-proxy-manager
+# proxy host in front of /ui — see integration/infra/nginx/qdrant-ingest.conf.
 #
 # env_file reads from .env in the same directory as this file, materialized
 # from the config bundle by `papaia-ctl addon start qdrant-ingest`.
@@ -162,11 +163,13 @@ services:
     # /health answers 200 whenever the process can serve — a degraded
     # container reports its reason in the body instead of restart-looping.
     #
-    # The control plane is a mutation API guarded by a static token; publishing
-    # it is an operator decision, not the default. Uncomment and set
-    # QI_EXT_PORT to expose it, and keep it bound to a trusted interface.
-    # ports:
-    #   - "${HOST_IP:-127.0.0.1}:${QI_EXT_PORT:-8300}:${QI_HTTP_PORT:-8300}"
+    # The one port carries REST (/v1, a mutation API guarded by a static
+    # token), MCP (/mcp, OIDC) and the web interface (/ui, OIDC). The fallback
+    # is loopback rather than 0.0.0.0 so a missing HOST_IP never exposes the
+    # control plane on every interface; papaia-ctl passes the core .env, which
+    # carries HOST_IP. Keep it on a trusted interface or behind a firewall.
+    ports:
+      - "${HOST_IP:-127.0.0.1}:${QI_EXT_PORT:-8300}:${QI_HTTP_PORT:-8300}"
     labels:
       de.fidonis.module: papaia-qdrant-ingest
       de.fidonis.role: ingester
@@ -197,7 +200,10 @@ services:
 networks:
   papaia-qdrant-ingest-net:
     driver: bridge
-    name: papaia-qdrant-ingest-net
+    # Scoped to the deployment so multiple papAIa stacks can share a host;
+    # papaia-ctl resolves the same value when it generates the Seam-1 override.
+    # A default single-stack host keeps the name papaia-qdrant-ingest-net.
+    name: ${PAPAIA_PROJECT:-papaia}-qdrant-ingest-net
 
 volumes:
   qi-cache:

@@ -5,7 +5,7 @@ Paperless-ngx document management addon for [papaia](https://github.com/Fidonis/
 Adds Paperless-ngx with full-text search and OCR, an OIDC-secured MCP server for
 AI-assisted document access via LibreChat, and a Keycloak SSO login for Paperless users.
 
-**Requires papaia ≥ 0.8.0.**
+**Requires papaia ≥ 1.3.0** (`addon_api` 2).
 
 ---
 
@@ -13,14 +13,34 @@ AI-assisted document access via LibreChat, and a Keycloak SSO login for Paperles
 
 | Service | Port | Description |
 |---|---|---|
-| `paperless` | `8010` (configurable) | Paperless-ngx 3.0.5 web UI and API |
+| `paperless` | `8010` (configurable) | Paperless-ngx web UI and API |
 | `paperless-mcp` | internal | OIDC/RBAC-secured MCP server for LibreChat |
 | `paperless-broker` | internal | Valkey task broker |
 | `paperless-db` | internal | PostgreSQL database |
 | `paperless-gotenberg` | internal | Office/email → PDF conversion |
 | `paperless-tika` | internal | Text extraction |
 
-All services run on the isolated `papaia-paperless-net` Docker bridge network.
+All services run on the add-on's own isolated Docker bridge network,
+`${PAPAIA_PROJECT:-papaia}-paperless-net` — `papaia-paperless-net` on a default
+single-stack host, or `papaia-<env>-paperless-net` when several papAIa deployments
+share a host. `papaia-ctl` resolves the same value when it generates the Seam-1
+override.
+
+## Components
+
+The images this add-on runs. Each version is the default of its image variable; set the
+variable in `<papaia-config>/addons/paperless/.env` to run another one.
+
+<!-- components:start -->
+| Component | Version | Role | Image variable |
+|---|---|---|---|
+| [Paperless-ngx](https://github.com/paperless-ngx/paperless-ngx) | `3.0.5` | primary | `PAPERLESS_IMAGE` |
+| [paperless-mcp-rbac](https://github.com/Fidonis/paperless-mcp-rbac) | `0.1.1` | primary | `PAPERLESS_MCP_IMAGE` |
+| [Valkey](https://github.com/valkey-io/valkey) | `9-alpine` (floating) | sidecar | `PAPERLESS_REDIS_IMAGE` |
+| [PostgreSQL](https://www.postgresql.org) | `18` (floating) | sidecar | `PAPERLESS_DB_IMAGE` |
+| [Gotenberg](https://github.com/gotenberg/gotenberg) | `8.34` (floating) | sidecar | `PAPERLESS_GOTENBERG_IMAGE` |
+| [Apache Tika](https://tika.apache.org) | `3.2.3.0` | sidecar | `PAPERLESS_TIKA_IMAGE` |
+<!-- components:end -->
 
 ---
 
@@ -102,19 +122,21 @@ Add a protocol mapper of type *Audience* to the existing `librechat` client:
 
 ### 3. Wire the network (Seam 1)
 
-Create a compose override that attaches `nginx` and `librechat` to `papaia-paperless-net`:
+`papaia-ctl` writes this override for you (`papaia-ctl addon install paperless`),
+resolving the network name from `PAPAIA_PROJECT` in the core `.env`. To wire it by
+hand, attach `nginx` and `librechat` to the same network the add-on creates:
 
 ```yaml
 # papaia-config/overrides/docker-compose.paperless.override.yml
 services:
   librechat:
     networks:
-      - papaia-paperless-net
+      - ${PAPAIA_PROJECT:-papaia}-paperless-net
   nginx-proxy-manager:
     networks:
-      - papaia-paperless-net
+      - ${PAPAIA_PROJECT:-papaia}-paperless-net
 networks:
-  papaia-paperless-net:
+  ${PAPAIA_PROJECT:-papaia}-paperless-net:
     external: true
 ```
 
@@ -162,7 +184,7 @@ mcpSettings:
 
 See `integration/infra/nginx/paperless.conf` for an Nginx configuration reference.
 In the Nginx Proxy Manager web UI, add a new proxy host pointing to `paperless:8000`
-on the `papaia-paperless-net` network.
+on the add-on network (`papaia-paperless-net`, or `papaia-<env>-paperless-net`).
 
 Behind a reverse proxy, Paperless needs to know which hop carries the real
 client IP — it uses that for login rate limiting, and gets it wrong by
@@ -205,9 +227,10 @@ docker compose -f addons/paperless/docker-compose.yml down -v
 
 ## Security notes
 
-- **Network isolation:** All Paperless services run on `papaia-paperless-net`, isolated
-  from the papaia core network. Only `nginx` and `librechat` are attached to this network
-  via the generated compose override.
+- **Network isolation:** All Paperless services run on the add-on's own bridge
+  (`papaia-paperless-net`, or `papaia-<env>-paperless-net` — one per deployment on a
+  shared host), isolated from the papaia core network. Only `nginx` and `librechat` are
+  attached to it via the generated compose override.
 - **OIDC at the data boundary:** `paperless-mcp` validates every incoming Bearer token
   against Keycloak before forwarding requests to Paperless. Paperless enforces its own
   per-user RBAC. No admin credentials are stored in the MCP layer.

@@ -9,6 +9,8 @@ deployment.
 
 | Add-on | Description |
 |---|---|
+| [`mediawiki`](mediawiki/) | MediaWiki knowledge base with access tiers + MCP server with per-user sign-in |
+| [`n8n`](n8n/) | n8n workflow automation behind a Keycloak SSO gate |
 | [`paperless`](paperless/) | Paperless-ngx document management + OIDC/RBAC MCP server |
 | [`paperless-connect`](paperless-connect/) | OIDC/RBAC MCP server for an existing standalone Paperless-ngx instance |
 | [`qdrant`](qdrant/) | Qdrant vector database + OIDC/RBAC MCP server |
@@ -16,7 +18,10 @@ deployment.
 | [`qdrant-ingest`](qdrant-ingest/) | Scheduled multi-source document ingestion into an existing Qdrant |
 
 Each add-on directory carries its own README, `.env.example`, and
-`papaia-app.yaml` manifest. See [AGENTS.md](AGENTS.md) for the manifest
-contract and the repository's engineering conventions.
+`papaia-app.yaml` manifest. The manifest `version` counts changes to the
+add-on; the `components` list in the manifest, mirrored as a table in the
+add-on's README, names the software and versions it runs. See
+[AGENTS.md](AGENTS.md) for the manifest contract and the repository's
+engineering conventions.
 
 Maintained by [Fidonis](https://fidonis.de).

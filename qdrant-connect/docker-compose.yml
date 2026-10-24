@@ -88,4 +88,7 @@ services:
 networks:
   papaia-qdrant-connect-net:
     driver: bridge
-    name: papaia-qdrant-connect-net
+    # Scoped to the deployment so multiple papAIa stacks can share a host;
+    # papaia-ctl resolves the same value when it generates the Seam-1 override.
+    # A default single-stack host keeps the name papaia-qdrant-connect-net.
+    name: ${PAPAIA_PROJECT:-papaia}-qdrant-connect-net

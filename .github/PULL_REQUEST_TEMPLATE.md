@@ -17,6 +17,6 @@
 
 ## Checklist
 - [ ] Title follows [Conventional Commits](https://www.conventionalcommits.org/) (e.g. `feat: …`, `fix(scope): …`)
-- [ ] Documentation updated (README / docs / CHANGELOG) where applicable
+- [ ] Documentation updated (README / docs) where applicable — `CHANGELOG.md` is updated at release cut, not in this PR
 - [ ] No secrets, credentials, or `.env` files committed
 - [ ] Self-reviewed the diff

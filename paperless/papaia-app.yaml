@@ -1,16 +1,72 @@
 name: paperless
-version: 1.1.0
+version: 2.0.0
 addon_repo: papaia-addon-paperless
 requires:
   # Contract generation this addon is built against; checked against the
   # core's ADDON_API window by cores that support compatibility gating.
-  addon_api: 1
-# Fallback axis for cores that do not read `requires` yet.
-papaia_compat: ">=0.8.0"
+  # 2: networks.app_network carries a ${PAPAIA_PROJECT:-papaia} template
+  # that the core resolves against its .env (needs a core serving addon_api 2).
+  addon_api: 2
+# Fallback axis for cores that do not read `requires` yet. 1.3.0 is the first
+# core serving addon_api 2 (deployment-scoped add-on networks).
+papaia_compat: ">=1.3.0"
 description: "Paperless-ngx document management + OIDC/RBAC MCP server"
 
+# The software this add-on packages. `version` above counts the add-on itself;
+# the `version` of each entry below is the default tag of its `image_var` in
+# docker-compose.yml, and tools/components.py keeps the two equal.
+components:
+  - id: paperless-ngx
+    name: Paperless-ngx
+    role: primary
+    kind: upstream
+    image_var: PAPERLESS_IMAGE
+    version: "3.0.5"
+    source: https://github.com/paperless-ngx/paperless-ngx
+  - id: paperless-mcp-rbac
+    name: paperless-mcp-rbac
+    role: primary
+    kind: fidonis
+    image_var: PAPERLESS_MCP_IMAGE
+    version: "0.1.1"
+    source: https://github.com/Fidonis/paperless-mcp-rbac
+  - id: valkey
+    name: Valkey
+    role: sidecar
+    kind: upstream
+    image_var: PAPERLESS_REDIS_IMAGE
+    version: "9-alpine"
+    source: https://github.com/valkey-io/valkey
+    pinned: false
+  - id: postgres
+    name: PostgreSQL
+    role: sidecar
+    kind: upstream
+    image_var: PAPERLESS_DB_IMAGE
+    version: "18"
+    source: https://www.postgresql.org
+    pinned: false
+  - id: gotenberg
+    name: Gotenberg
+    role: sidecar
+    kind: upstream
+    image_var: PAPERLESS_GOTENBERG_IMAGE
+    version: "8.34"
+    source: https://github.com/gotenberg/gotenberg
+    pinned: false
+  - id: tika
+    name: Apache Tika
+    role: sidecar
+    kind: upstream
+    image_var: PAPERLESS_TIKA_IMAGE
+    version: "3.2.3.0"
+    source: https://tika.apache.org
+
 networks:
-  app_network: papaia-paperless-net
+  # Resolved by papaia-ctl against the core .env, matching the add-on's own
+  # compose network name. Scopes the Seam-1 bridge per deployment; a default
+  # single-stack host resolves it to papaia-paperless-net.
+  app_network: "${PAPAIA_PROJECT:-papaia}-paperless-net"
   attach: [nginx-proxy-manager, librechat]
 
 # Env vars pointing at the bundled-Keycloak CA cert (mounted from

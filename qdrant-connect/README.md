@@ -10,7 +10,7 @@ without touching the existing Qdrant installation.
 Use the full [`qdrant`](https://github.com/Fidonis/papaia-addon-qdrant) add-on if you want papaia
 to manage the Qdrant vector database itself.
 
-**Requires papaia ≥ 0.8.0.**
+**Requires papaia ≥ 1.3.0** (`addon_api` 2).
 
 ---
 
@@ -20,7 +20,21 @@ to manage the Qdrant vector database itself.
 |---|---|---|
 | `qdrant-mcp` | internal | OIDC/RBAC-secured MCP server for LibreChat |
 
-All services run on the isolated `papaia-qdrant-connect-net` Docker bridge network.
+All services run on the add-on's own isolated Docker bridge network,
+`${PAPAIA_PROJECT:-papaia}-qdrant-connect-net` — `papaia-qdrant-connect-net` on a default
+single-stack host, or `papaia-<env>-qdrant-connect-net` when several papAIa deployments
+share a host. `papaia-ctl` resolves the same value when it generates the Seam-1 override.
+
+## Components
+
+The images this add-on runs. Each version is the default of its image variable; set the
+variable in `<papaia-config>/addons/qdrant-connect/.env` to run another one.
+
+<!-- components:start -->
+| Component | Version | Role | Image variable |
+|---|---|---|---|
+| [qdrant-mcp-rbac](https://github.com/Fidonis/qdrant-mcp-rbac) | `0.3.0` | primary | `QDRANT_MCP_IMAGE` |
+<!-- components:end -->
 
 ---
 
@@ -176,20 +190,21 @@ The role name must match `QDRANT_MCP_RBAC_ADMIN_ROLE`. It reaches the MCP server
 
 ### 3. Wire the network (Seam 1)
 
-Create a compose override that attaches `librechat` and `litellm` to
-`papaia-qdrant-connect-net`:
+`papaia-ctl` writes this override for you (`papaia-ctl addon install qdrant-connect`),
+resolving the network name from `PAPAIA_PROJECT` in the core `.env`. To wire it by hand,
+attach `librechat` and `litellm` to the same network the add-on creates:
 
 ```yaml
 # papaia-config/overrides/docker-compose.qdrant-connect.override.yml
 services:
   librechat:
     networks:
-      - papaia-qdrant-connect-net
+      - ${PAPAIA_PROJECT:-papaia}-qdrant-connect-net
   litellm:
     networks:
-      - papaia-qdrant-connect-net
+      - ${PAPAIA_PROJECT:-papaia}-qdrant-connect-net
 networks:
-  papaia-qdrant-connect-net:
+  ${PAPAIA_PROJECT:-papaia}-qdrant-connect-net:
     external: true
 ```
 
@@ -296,9 +311,10 @@ Your Qdrant data is untouched by any of these — this add-on does not own the i
 
 ## Security notes
 
-- **Network isolation:** `qdrant-mcp` runs on `papaia-qdrant-connect-net`, isolated from the
-  papaia core network. Only `librechat` and `litellm` are attached to this network via the
-  generated compose override.
+- **Network isolation:** `qdrant-mcp` runs on the add-on's own bridge
+  (`papaia-qdrant-connect-net`, or `papaia-<env>-qdrant-connect-net` — one per deployment on
+  a shared host), isolated from the papaia core network. Only `librechat` and `litellm` are
+  attached to it via the generated compose override.
 - **OIDC at the data boundary:** every incoming Bearer token is validated against Keycloak
   before any Qdrant request is made.
 - **Least privilege per request:** the derived Qdrant JWT is scoped to the caller's grants and

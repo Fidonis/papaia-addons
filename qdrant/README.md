@@ -11,7 +11,7 @@ caller's roles grant.
 Use the [`qdrant-connect`](https://github.com/Fidonis/papaia-addon-qdrant-connect) add-on
 instead if you already run a Qdrant instance and only want the MCP layer.
 
-**Requires papaia ≥ 0.8.0.**
+**Requires papaia ≥ 1.3.0** (`addon_api` 2).
 
 ---
 
@@ -22,8 +22,24 @@ instead if you already run a Qdrant instance and only want the MCP layer.
 | `qdrant` | `QDRANT_EXT_PORT` (6333) | Vector database, JWT RBAC enabled |
 | `qdrant-mcp` | internal | OIDC/RBAC-secured MCP server for LibreChat |
 
-All services run on the isolated `papaia-qdrant-net` Docker bridge network. The published Qdrant
-port is the ingestion and administration path; there is no public ingress.
+All services run on the add-on's own isolated Docker bridge network,
+`${PAPAIA_PROJECT:-papaia}-qdrant-net` — `papaia-qdrant-net` on a default single-stack
+host, or `papaia-<env>-qdrant-net` when several papAIa deployments share a host.
+`papaia-ctl` resolves the same value when it generates the Seam-1 override. The
+published Qdrant port is the ingestion and administration path; there is no public
+ingress.
+
+## Components
+
+The images this add-on runs. Each version is the default of its image variable; set the
+variable in `<papaia-config>/addons/qdrant/.env` to run another one.
+
+<!-- components:start -->
+| Component | Version | Role | Image variable |
+|---|---|---|---|
+| [Qdrant](https://github.com/qdrant/qdrant) | `v1.19.0` | primary | `QDRANT_IMAGE` |
+| [qdrant-mcp-rbac](https://github.com/Fidonis/qdrant-mcp-rbac) | `0.3.0` | primary | `QDRANT_MCP_IMAGE` |
+<!-- components:end -->
 
 ---
 
@@ -130,19 +146,21 @@ The role name must match `QDRANT_MCP_RBAC_ADMIN_ROLE`. It reaches the MCP server
 
 ### 3. Wire the network (Seam 1)
 
-Create a compose override that attaches `librechat` and `litellm` to `papaia-qdrant-net`:
+`papaia-ctl` writes this override for you (`papaia-ctl addon install qdrant`), resolving
+the network name from `PAPAIA_PROJECT` in the core `.env`. To wire it by hand, attach
+`librechat` and `litellm` to the same network the add-on creates:
 
 ```yaml
 # papaia-config/overrides/docker-compose.qdrant.override.yml
 services:
   librechat:
     networks:
-      - papaia-qdrant-net
+      - ${PAPAIA_PROJECT:-papaia}-qdrant-net
   litellm:
     networks:
-      - papaia-qdrant-net
+      - ${PAPAIA_PROJECT:-papaia}-qdrant-net
 networks:
-  papaia-qdrant-net:
+  ${PAPAIA_PROJECT:-papaia}-qdrant-net:
     external: true
 ```
 
@@ -260,9 +278,10 @@ The `qdrant-storage` volume survives everything except `--clean-up` / `down -v`.
 
 ## Security notes
 
-- **Network isolation:** both services run on `papaia-qdrant-net`, isolated from the papaia core
-  network. Only `librechat` and `litellm` are attached to this network via the generated compose
-  override.
+- **Network isolation:** both services run on the add-on's own bridge (`papaia-qdrant-net`,
+  or `papaia-<env>-qdrant-net` — one per deployment on a shared host), isolated from the
+  papaia core network. Only `librechat` and `litellm` are attached to it via the generated
+  compose override.
 - **OIDC at the data boundary:** every incoming Bearer token is validated against Keycloak before
   any Qdrant request is made.
 - **Least privilege per request:** the derived Qdrant JWT is scoped to the caller's grants and

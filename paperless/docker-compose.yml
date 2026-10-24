@@ -221,7 +221,10 @@ services:
 networks:
   papaia-paperless-net:
     driver: bridge
-    name: papaia-paperless-net
+    # Scoped to the deployment so multiple papAIa stacks can share a host;
+    # papaia-ctl resolves the same value when it generates the Seam-1 override.
+    # A default single-stack host keeps the name papaia-paperless-net.
+    name: ${PAPAIA_PROJECT:-papaia}-paperless-net
 
 volumes:
   paperless-data:

@@ -40,10 +40,20 @@ updates:
           - "*"
 
   # Base images of the mediawiki add-on: the wiki image's Dockerfile and the
-  # database and MCP server images in its compose file. A bump under
-  # mediawiki/image/ also needs a new add-on version (mediawiki-image
-  # workflow). The extension commits pinned in the Dockerfile are not covered
-  # and are updated by hand.
+  # database and MCP server images in its compose file. The extension commits
+  # pinned in the Dockerfile are not covered and are updated by hand.
+  #
+  # A Dependabot PR changes one line and needs follow-up before its checks pass:
+  # - mediawiki/image/: the add-on version in papaia-app.yaml and the default
+  #   tag in docker-compose.yml must change too (mediawiki-image workflow).
+  # - docker-compose.yml: run `python tools/components.py fix` to sync the
+  #   manifest, .env.example and README (Component versions check).
+  #
+  # The add-on follows the MediaWiki LTS line (extensions are pinned to its
+  # REL branch) and the MariaDB LTS line (the data volume outlives add-on
+  # updates), so only patch updates of both are proposed. Moving to a new
+  # line is a deliberate change. Composer only runs in the build stage and is
+  # bumped by hand together with another image change.
   - package-ecosystem: "docker"
     directory: "/mediawiki/image"
     schedule:
@@ -55,6 +65,12 @@ updates:
     commit-message:
       prefix: "chore"
       include: "scope"
+    ignore:
+      - dependency-name: "library/mediawiki"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
+      - dependency-name: "library/composer"
 
   - package-ecosystem: "docker-compose"
     directory: "/mediawiki"
@@ -67,3 +83,8 @@ updates:
     commit-message:
       prefix: "chore"
       include: "scope"
+    ignore:
+      - dependency-name: "library/mariadb"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"

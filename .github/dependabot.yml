@@ -38,3 +38,32 @@ updates:
       github-actions:
         patterns:
           - "*"
+
+  # Base images of the mediawiki add-on: the wiki image's Dockerfile and the
+  # database and MCP server images in its compose file. A bump under
+  # mediawiki/image/ also needs a new add-on version (mediawiki-image
+  # workflow). The extension commits pinned in the Dockerfile are not covered
+  # and are updated by hand.
+  - package-ecosystem: "docker"
+    directory: "/mediawiki/image"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "type: chore"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+
+  - package-ecosystem: "docker-compose"
+    directory: "/mediawiki"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "type: chore"
+    commit-message:
+      prefix: "chore"
+      include: "scope"

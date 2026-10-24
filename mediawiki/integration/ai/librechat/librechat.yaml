@@ -1,0 +1,27 @@
+# LibreChat registration of the MediaWiki MCP server.
+#
+# Each user connects once from the MCP menu: LibreChat opens the wiki's
+# sign-in (Keycloak) and consent page, and from then on every tool call runs
+# as that wiki user, within the access tiers.
+#
+# The URL is the add-on's MCP public URL, <MW_SERVER>/mcp. The value below
+# matches the add-on's default MW_SERVER (https://host.docker.internal:8020),
+# which LibreChat reaches through its host.docker.internal mapping and
+# trusts through the papaia local CA. With a different MW_SERVER, replace
+# url and the allowedDomains entry in the customer overlay -- see the add-on
+# README, "LibreChat".
+mcpServers:
+  MediaWiki:
+    title: 'MediaWiki'
+    description: 'Knowledge base: read, search and edit wiki pages as yourself, within your access tiers.'
+    type: streamable-http
+    url: https://host.docker.internal:8020/mcp
+    # OAuth sign-in per user; nothing to connect at LibreChat start.
+    requiresOAuth: true
+    startup: false
+
+mcpSettings:
+  # The core lists allowedDomains, so LibreChat refuses every MCP server
+  # whose domain is not listed here ("Domain ... is not allowed").
+  allowedDomains:
+    - "host.docker.internal"

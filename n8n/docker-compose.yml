@@ -6,8 +6,8 @@
 # has no native OIDC, so an oauth2-proxy sidecar is the only publicly exposed
 # endpoint and no request reaches the engine unauthenticated.
 #
-# All services run on the isolated papaia-n8n-net bridge network.
-# papaia-ctl generates a compose override that attaches nginx to this network
+# All services run on the isolated ${PAPAIA_PROJECT:-papaia}-n8n-net bridge
+# network. papaia-ctl generates a compose override that attaches nginx to it
 # (Seam 1). External access via the Nginx Proxy Manager (Seam 5 — see
 # integration/infra/nginx/n8n.conf and README.md).
 #
@@ -233,7 +233,10 @@ services:
 networks:
   papaia-n8n-net:
     driver: bridge
-    name: papaia-n8n-net
+    # Scoped to the deployment so multiple papAIa stacks can share a host;
+    # papaia-ctl resolves the same value when it generates the Seam-1 override.
+    # A default single-stack host keeps the name papaia-n8n-net.
+    name: ${PAPAIA_PROJECT:-papaia}-n8n-net
 
 volumes:
   n8n-data:

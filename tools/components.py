@@ -29,6 +29,7 @@ Commands:
 from __future__ import annotations
 
 import argparse
+import itertools
 import re
 import subprocess
 import sys
@@ -257,7 +258,7 @@ def check_changelog(path: Path, manifest: dict[str, Any]) -> list[str]:
     if not changelog.is_file():
         return [f"{CHANGELOG} is missing"]
     versions, problems = changelog_sections(changelog.read_text(encoding="utf-8"))
-    for newer, older in zip(versions, versions[1:]):
+    for newer, older in itertools.pairwise(versions):
         if version_key(newer) <= version_key(older):
             problems.append(
                 f"{CHANGELOG}: `{newer}` comes before `{older}`, newest first and each version once"

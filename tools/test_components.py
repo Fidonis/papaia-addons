@@ -204,11 +204,10 @@ class CheckTests(unittest.TestCase):
 
     def test_missing_integration_paths_are_reported(self) -> None:
         for path in INTEGRATION_FILES:
-            with self.subTest(path=path):
-                with tempfile.TemporaryDirectory() as tmp:
-                    addon = make_addon(Path(tmp))
-                    (addon / path).unlink()
-                    self.assertReported(addon, f"`{path}` does not exist")
+            with self.subTest(path=path), tempfile.TemporaryDirectory() as tmp:
+                addon = make_addon(Path(tmp))
+                (addon / path).unlink()
+                self.assertReported(addon, f"`{path}` does not exist")
 
     def test_network_name_must_match_compose(self) -> None:
         addon = self.edited(components.COMPOSE, "-demo-net", "-demo-network")
@@ -240,21 +239,19 @@ class CheckTests(unittest.TestCase):
 
     def test_malformed_changelog_heading_is_reported(self) -> None:
         for heading in ("## 1.0.0", "## [1.0.0]", "## [1.0] - 2026-01-01", "## [1.0.0] - 1.1.2026"):
-            with self.subTest(heading=heading):
-                with tempfile.TemporaryDirectory() as tmp:
-                    changelog = CHANGELOG.replace("## [1.0.0] - 2026-01-01", heading)
-                    addon = make_addon(Path(tmp), changelog=changelog)
-                    problems = components.check_addon(addon)
-                    self.assertTrue(any(heading in p for p in problems), problems)
+            with self.subTest(heading=heading), tempfile.TemporaryDirectory() as tmp:
+                changelog = CHANGELOG.replace("## [1.0.0] - 2026-01-01", heading)
+                addon = make_addon(Path(tmp), changelog=changelog)
+                problems = components.check_addon(addon)
+                self.assertTrue(any(heading in p for p in problems), problems)
 
     def test_changelog_must_run_newest_first_without_repeats(self) -> None:
         for older in ("1.1.0", "1.0.0"):
-            with self.subTest(older=older):
-                with tempfile.TemporaryDirectory() as tmp:
-                    changelog = CHANGELOG + f"\n## [{older}] - 2025-12-01\n"
-                    addon = make_addon(Path(tmp), changelog=changelog)
-                    problems = components.check_addon(addon)
-                    self.assertTrue(any("comes before" in p for p in problems), problems)
+            with self.subTest(older=older), tempfile.TemporaryDirectory() as tmp:
+                changelog = CHANGELOG + f"\n## [{older}] - 2025-12-01\n"
+                addon = make_addon(Path(tmp), changelog=changelog)
+                problems = components.check_addon(addon)
+                self.assertTrue(any("comes before" in p for p in problems), problems)
 
     def test_newest_changelog_section_must_be_the_manifest_version(self) -> None:
         manifest = MANIFEST.replace("version: 1.0.0", "version: 1.1.0")

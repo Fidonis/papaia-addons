@@ -10,9 +10,15 @@ from pathlib import Path
 import components
 
 COMPOSE = """\
+networks:
+  app:
+    name: ${PAPAIA_PROJECT:-papaia}-demo-net
 services:
   app:
     image: ${DEMO_IMAGE:-docker.io/example/demo:1.2.3}
+    environment:
+      DEMO_URL: ${DEMO_URL:-http://demo}
+      BIND: ${HOST_IP:-127.0.0.1}
   db:
     image: ${DEMO_DB_IMAGE:-docker.io/library/postgres:18}
 """
@@ -20,6 +26,22 @@ services:
 MANIFEST = """\
 name: demo
 version: 1.0.0
+networks:
+  app_network: "${PAPAIA_PROJECT:-papaia}-demo-net"
+env_prompts:
+  DEMO_URL:
+    label: Demo URL
+env_replace_secrets:
+  DEMO_SECRET:
+    hint: Copy it from the Keycloak Admin UI
+integration:
+  keycloak:
+    clients:
+      - integration/client.json
+    client_mappers:
+      librechat:
+        - integration/mapper.json
+  librechat: integration/librechat.yaml
 components:
   - id: demo
     name: Demo
@@ -38,19 +60,43 @@ components:
     pinned: false
 """
 
-ENV = "# DEMO_IMAGE=docker.io/example/demo:1.2.3\n# DEMO_DB_IMAGE=docker.io/library/postgres:18\n"
+ENV = """\
+DEMO_URL=http://demo
+# DEMO_SECRET=REPLACE_WITH_DEMO_SECRET
+# DEMO_IMAGE=docker.io/example/demo:1.2.3
+# DEMO_DB_IMAGE=docker.io/library/postgres:18
+"""
+
+CHANGELOG = """\
+# Changelog
+
+## [Unreleased]
+
+## [1.0.0] - 2026-01-01
+
+### Added
+- First release.
+"""
+
+INTEGRATION_FILES = ("integration/client.json", "integration/mapper.json", "integration/librechat.yaml")
 
 
 def write(path: Path, text: str) -> None:
     path.write_bytes(text.encode("utf-8"))
 
 
-def make_addon(root: Path, manifest: str = MANIFEST, compose: str = COMPOSE) -> Path:
+def make_addon(
+    root: Path, manifest: str = MANIFEST, compose: str = COMPOSE, changelog: str = CHANGELOG
+) -> Path:
     addon = root / "demo"
     addon.mkdir()
     write(addon / components.MANIFEST, manifest)
     write(addon / components.COMPOSE, compose)
     write(addon / components.ENV_EXAMPLE, ENV)
+    write(addon / components.CHANGELOG, changelog)
+    for name in INTEGRATION_FILES:
+        (addon / name).parent.mkdir(exist_ok=True)
+        write(addon / name, "{}\n")
     listed = components.load_manifest(addon).get("components") or []
     write(addon / components.README, "# demo\n\n" + components.render_block(listed) + "\n")
     return addon
@@ -130,6 +176,95 @@ class CheckTests(unittest.TestCase):
         addon = make_addon(self.root, manifest="name: demo\nversion: 1.0.0\n")
         self.assertEqual(len(components.check_addon(addon)), 1)
 
+    def edited(self, name: str, old: str, new: str) -> Path:
+        addon = make_addon(self.root)
+        target = addon / name
+        text = target.read_text(encoding="utf-8")
+        self.assertIn(old, text)
+        write(target, text.replace(old, new))
+        return addon
+
+    def assertReported(self, addon: Path, *fragments: str) -> None:
+        problems = components.check_addon(addon)
+        self.assertEqual(len(problems), 1, problems)
+        for fragment in fragments:
+            self.assertIn(fragment, problems[0])
+
+    def test_name_must_match_the_directory(self) -> None:
+        addon = self.edited(components.MANIFEST, "name: demo\n", "name: other\n")
+        self.assertReported(addon, "name is `other`", "`demo`")
+
+    def test_unknown_env_prompt_is_reported(self) -> None:
+        addon = self.edited(components.MANIFEST, "  DEMO_URL:\n", "  DEMO_GONE:\n")
+        self.assertReported(addon, "env_prompts.DEMO_GONE")
+
+    def test_unknown_replace_secret_is_reported(self) -> None:
+        addon = self.edited(components.MANIFEST, "  DEMO_SECRET:\n", "  DEMO_TOKEN:\n")
+        self.assertReported(addon, "env_replace_secrets.DEMO_TOKEN")
+
+    def test_missing_integration_paths_are_reported(self) -> None:
+        for path in INTEGRATION_FILES:
+            with self.subTest(path=path):
+                with tempfile.TemporaryDirectory() as tmp:
+                    addon = make_addon(Path(tmp))
+                    (addon / path).unlink()
+                    self.assertReported(addon, f"`{path}` does not exist")
+
+    def test_network_name_must_match_compose(self) -> None:
+        addon = self.edited(components.COMPOSE, "-demo-net", "-demo-network")
+        self.assertReported(addon, "networks.app_network", "-demo-net")
+
+    def test_literal_network_name_is_compared_as_written(self) -> None:
+        manifest = MANIFEST.replace('"${PAPAIA_PROJECT:-papaia}-demo-net"', "demo-net")
+        compose = COMPOSE.replace("${PAPAIA_PROJECT:-papaia}-demo-net", "demo-net")
+        self.assertEqual(components.check_addon(make_addon(self.root, manifest, compose)), [])
+
+    def test_undocumented_compose_variable_is_reported(self) -> None:
+        addon = self.edited(components.COMPOSE, "${DEMO_URL:-http://demo}", "${DEMO_NEW:-1}")
+        problems = components.check_addon(addon)
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("${DEMO_NEW}", problems[0])
+
+    def test_core_variables_need_no_documentation(self) -> None:
+        compose = COMPOSE.replace("BIND:", "UID: ${UID:-1000}\n      BIND:")
+        self.assertEqual(components.check_addon(make_addon(self.root, compose=compose)), [])
+
+    def test_commented_variable_counts_as_documented(self) -> None:
+        addon = self.edited(components.COMPOSE, "${DEMO_URL:-http://demo}", "${DEMO_SECRET}")
+        self.assertEqual(components.check_addon(addon), [])
+
+    def test_missing_changelog_is_reported(self) -> None:
+        addon = make_addon(self.root)
+        (addon / components.CHANGELOG).unlink()
+        self.assertReported(addon, f"{components.CHANGELOG} is missing")
+
+    def test_malformed_changelog_heading_is_reported(self) -> None:
+        for heading in ("## 1.0.0", "## [1.0.0]", "## [1.0] - 2026-01-01", "## [1.0.0] - 1.1.2026"):
+            with self.subTest(heading=heading):
+                with tempfile.TemporaryDirectory() as tmp:
+                    changelog = CHANGELOG.replace("## [1.0.0] - 2026-01-01", heading)
+                    addon = make_addon(Path(tmp), changelog=changelog)
+                    problems = components.check_addon(addon)
+                    self.assertTrue(any(heading in p for p in problems), problems)
+
+    def test_changelog_must_run_newest_first_without_repeats(self) -> None:
+        for older in ("1.1.0", "1.0.0"):
+            with self.subTest(older=older):
+                with tempfile.TemporaryDirectory() as tmp:
+                    changelog = CHANGELOG + f"\n## [{older}] - 2025-12-01\n"
+                    addon = make_addon(Path(tmp), changelog=changelog)
+                    problems = components.check_addon(addon)
+                    self.assertTrue(any("comes before" in p for p in problems), problems)
+
+    def test_newest_changelog_section_must_be_the_manifest_version(self) -> None:
+        manifest = MANIFEST.replace("version: 1.0.0", "version: 1.1.0")
+        addon = make_addon(self.root, manifest=manifest)
+        self.assertReported(addon, "newest section must be", "`1.1.0`")
+
+    def test_subsections_are_not_version_headings(self) -> None:
+        changelog = CHANGELOG + "\n### Upgrade notes\n- Run the migration first.\n"
+        self.assertEqual(components.check_addon(make_addon(self.root, changelog=changelog)), [])
+
 
 def git(root: Path, *args: str) -> None:
     subprocess.run(
@@ -160,6 +295,17 @@ class ReleaseTests(unittest.TestCase):
         write(compose, compose.read_text(encoding="utf-8").replace("1.2.3", "1.3.0"))
         components.fix_addon(self.addon)
 
+    def bump(self, version: str, *, changelog: bool = True) -> None:
+        manifest = self.addon / components.MANIFEST
+        write(
+            manifest,
+            manifest.read_text(encoding="utf-8").replace("version: 1.0.0", f"version: {version}"),
+        )
+        if changelog:
+            path = self.addon / components.CHANGELOG
+            section = f"## [{version}] - 2026-02-01\n\n### Changed\n- Something.\n\n## [1.0.0]"
+            write(path, path.read_text(encoding="utf-8").replace("## [1.0.0]", section))
+
     def test_untouched_addon_passes(self) -> None:
         self.assertEqual(components.release_check(self.root, "v1.0.0"), [])
 
@@ -168,22 +314,30 @@ class ReleaseTests(unittest.TestCase):
         self.commit("raise the demo image")
         problems = components.release_check(self.root, "v1.0.0")
         self.assertEqual(len(problems), 1, problems)
-        manifest = self.addon / components.MANIFEST
-        write(
-            manifest,
-            manifest.read_text(encoding="utf-8").replace("version: 1.0.0", "version: 1.0.1"),
-        )
+        self.bump("1.0.1")
         self.commit("bump")
         self.assertEqual(components.release_check(self.root, "v1.0.0"), [])
 
     def test_bump_without_change_fails(self) -> None:
-        manifest = self.addon / components.MANIFEST
-        write(
-            manifest,
-            manifest.read_text(encoding="utf-8").replace("version: 1.0.0", "version: 1.1.0"),
-        )
+        self.bump("1.1.0")
         self.commit("bump")
         self.assertEqual(len(components.release_check(self.root, "v1.0.0")), 1)
+
+    def test_bump_without_changelog_section_fails(self) -> None:
+        self.bump_compose()
+        self.bump("1.0.1", changelog=False)
+        self.commit("bump")
+        problems = components.release_check(self.root, "v1.0.0")
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("CHANGELOG.md has no section for it", problems[0])
+
+    def test_bump_without_a_changelog_file_fails(self) -> None:
+        self.bump_compose()
+        self.bump("1.0.1", changelog=False)
+        (self.addon / components.CHANGELOG).unlink()
+        self.commit("bump")
+        problems = components.release_check(self.root, "v1.0.0")
+        self.assertEqual(len(problems), 1, problems)
 
     def test_docs_only_change_needs_no_bump(self) -> None:
         write(self.addon / "notes.md", "more words\n")
@@ -192,11 +346,7 @@ class ReleaseTests(unittest.TestCase):
 
     def test_report_names_the_changed_component(self) -> None:
         self.bump_compose()
-        manifest = self.addon / components.MANIFEST
-        write(
-            manifest,
-            manifest.read_text(encoding="utf-8").replace("version: 1.0.0", "version: 1.0.1"),
-        )
+        self.bump("1.0.1")
         self.commit("raise the demo image")
         table = components.report(self.root, "v1.0.0", everything=False)
         self.assertIn("| demo | 1.0.0 → 1.0.1 | Demo 1.2.3 → 1.3.0; PostgreSQL 18 |", table)

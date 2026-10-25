@@ -13,11 +13,17 @@ declared next to it or derived from it, and this script keeps the two honest:
 * the commented image lines of `.env.example`;
 * the generated table between the `components` markers of each README.
 
+It also checks what the rest of a manifest says against the files next to it
+(`name`, `env_prompts`, `integration`, `networks.app_network`, the variables
+Compose substitutes) and that each add-on keeps a `CHANGELOG.md` with a section
+for its current version.
+
 Commands:
   check          fail on any disagreement (CI runs this)
   fix            rewrite the derived places from Compose
   report         Markdown matrix of what changed since a ref
-  release-check  fail when an add-on changed since a ref without a version bump
+  release-check  fail when an add-on changed since a ref without a version bump,
+                 or moved to a version its CHANGELOG.md has no section for
 """
 
 from __future__ import annotations
@@ -37,6 +43,7 @@ MANIFEST = "papaia-app.yaml"
 COMPOSE = "docker-compose.yml"
 ENV_EXAMPLE = ".env.example"
 README = "README.md"
+CHANGELOG = "CHANGELOG.md"
 
 README_START = "<!-- components:start -->"
 README_END = "<!-- components:end -->"
@@ -54,6 +61,16 @@ ENV_IMAGE = re.compile(r"^(?P<prefix>#\s*)?(?P<var>[A-Z][A-Z0-9_]*)=(?P<ref>\S+)
 # `18`, `8.34`, `9-alpine`, `latest`: the deployed version depends on the pull date.
 EXACT_TAG = re.compile(r"^v?\d+\.\d+\.\d+(?:[.+-].*)?$")
 SEMVER = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
+# `KEY=value` as written in `.env.example`, active or commented out.
+ENV_KEY = re.compile(r"^#?\s*(?P<var>[A-Z][A-Z0-9_]*)=")
+COMPOSE_VARIABLE = re.compile(r"\$\{(?P<var>[A-Za-z_][A-Za-z0-9_]*)")
+# The core `.env` hands these to every add-on, so an add-on uses them without
+# declaring them (src/.env.example of the core repository).
+CORE_VARIABLES = frozenset({"COMPOSE_PROJECT_NAME", "GID", "HOST_IP", "PAPAIA_PROJECT", "UID"})
+# Consumers such as papaia-manager read these headings; keep the shape.
+CHANGELOG_HEADING = re.compile(
+    r"^## \[(?P<version>[^\]]+)\](?: - (?P<date>\d{4}-\d{2}-\d{2}))?\s*$"
+)
 
 
 def image_tag(ref: str) -> str:
@@ -118,6 +135,137 @@ def load_manifest(path: Path) -> dict[str, Any]:
 
 def addon_dirs(root: Path) -> list[Path]:
     return sorted(p for p in root.iterdir() if p.is_dir() and (p / MANIFEST).is_file())
+
+
+def version_key(version: str) -> tuple[int, int, int]:
+    found = SEMVER.match(version)
+    if not found:
+        raise ValueError(f"`{version}` is not X.Y.Z")
+    return int(found[1]), int(found[2]), int(found[3])
+
+
+def documented_variables(path: Path) -> set[str]:
+    """Variables `.env.example` names, as an assignment or a commented-out one."""
+    env_path = path / ENV_EXAMPLE
+    if not env_path.is_file():
+        return set()
+    lines = env_path.read_text(encoding="utf-8").splitlines()
+    return {found["var"] for found in map(ENV_KEY.match, lines) if found}
+
+
+def compose_variables(text: str) -> set[str]:
+    used: set[str] = set()
+    for line in text.splitlines():
+        if not line.lstrip().startswith("#"):
+            used.update(found["var"] for found in COMPOSE_VARIABLE.finditer(line))
+    return used
+
+
+def compose_network_names(text: str) -> set[str]:
+    try:
+        loaded = yaml.safe_load(text)
+    except yaml.YAMLError:
+        return set()
+    networks = loaded.get("networks") if isinstance(loaded, dict) else None
+    if not isinstance(networks, dict):
+        return set()
+    return {
+        entry["name"]
+        for entry in networks.values()
+        if isinstance(entry, dict) and isinstance(entry.get("name"), str)
+    }
+
+
+def integration_paths(manifest: dict[str, Any]) -> list[str]:
+    """Every file the `integration` section points at."""
+    integration = manifest.get("integration")
+    if not isinstance(integration, dict):
+        return []
+    paths: list[str] = []
+    keycloak = integration.get("keycloak")
+    if isinstance(keycloak, dict):
+        if isinstance(keycloak.get("clients"), list):
+            paths.extend(keycloak["clients"])
+        mappers = keycloak.get("client_mappers")
+        if isinstance(mappers, dict):
+            for listed in mappers.values():
+                if isinstance(listed, list):
+                    paths.extend(listed)
+    for key in ("librechat", "nginx"):
+        paths.append(integration.get(key))
+    return [p for p in paths if isinstance(p, str)]
+
+
+def check_manifest(path: Path, manifest: dict[str, Any]) -> list[str]:
+    """What the manifest claims about the files next to it."""
+    problems = []
+    if manifest.get("name") != path.name:
+        problems.append(f"{MANIFEST}: name is `{manifest.get('name')}`, the directory is `{path.name}`")
+
+    documented = documented_variables(path)
+    for section in ("env_prompts", "env_replace_secrets"):
+        entries = manifest.get(section)
+        for var in entries if isinstance(entries, dict) else []:
+            if var not in documented:
+                problems.append(f"{MANIFEST}: {section}.{var} is not in {ENV_EXAMPLE}")
+
+    for relative in integration_paths(manifest):
+        if not (path / relative).is_file():
+            problems.append(f"{MANIFEST}: integration path `{relative}` does not exist")
+
+    compose_text = (path / COMPOSE).read_text(encoding="utf-8")
+    networks = manifest.get("networks")
+    network = networks.get("app_network") if isinstance(networks, dict) else None
+    if isinstance(network, str) and network not in compose_network_names(compose_text):
+        problems.append(
+            f"{MANIFEST}: networks.app_network `{network}` is not a network `name:` in {COMPOSE}"
+        )
+
+    for var in sorted(compose_variables(compose_text) - documented - CORE_VARIABLES):
+        problems.append(f"{COMPOSE}: ${{{var}}} is not documented in {ENV_EXAMPLE}")
+    return problems
+
+
+def changelog_sections(text: str) -> tuple[list[str], list[str]]:
+    """Versions of a changelog's sections, newest first, and the headings that do not parse."""
+    versions: list[str] = []
+    problems: list[str] = []
+    for number, line in enumerate(text.splitlines(), 1):
+        if not line.startswith("## "):
+            continue
+        found = CHANGELOG_HEADING.match(line)
+        if found and found["version"] == "Unreleased" and not found["date"]:
+            continue
+        if found and found["date"] and SEMVER.match(found["version"]):
+            versions.append(found["version"])
+        else:
+            problems.append(
+                f"{CHANGELOG}:{number}: `{line}` is not a `## [X.Y.Z] - YYYY-MM-DD` heading"
+            )
+    return versions, problems
+
+
+def has_changelog_section(path: Path, version: str) -> bool:
+    changelog = path / CHANGELOG
+    if not changelog.is_file():
+        return False
+    return version in changelog_sections(changelog.read_text(encoding="utf-8"))[0]
+
+
+def check_changelog(path: Path, manifest: dict[str, Any]) -> list[str]:
+    changelog = path / CHANGELOG
+    if not changelog.is_file():
+        return [f"{CHANGELOG} is missing"]
+    versions, problems = changelog_sections(changelog.read_text(encoding="utf-8"))
+    for newer, older in zip(versions, versions[1:]):
+        if version_key(newer) <= version_key(older):
+            problems.append(
+                f"{CHANGELOG}: `{newer}` comes before `{older}`, newest first and each version once"
+            )
+    current = str(manifest.get("version"))
+    if not versions or versions[0] != current:
+        problems.append(f"{CHANGELOG}: the newest section must be the manifest version `{current}`")
+    return problems
 
 
 def check_addon(path: Path) -> list[str]:
@@ -207,7 +355,7 @@ def check_addon(path: Path) -> list[str]:
             problems.append(f"{README}: missing the `{README_START}` / `{README_END}` markers")
         elif block != render_block(valid):
             problems.append(f"{README}: components table is out of date")
-    return problems
+    return problems + check_manifest(path, manifest) + check_changelog(path, manifest)
 
 
 def sync_manifest(text: str, images: dict[str, str]) -> str:
@@ -375,6 +523,8 @@ def release_check(root: Path, ref: str) -> list[str]:
             problems.append(f"{name}: changed since {ref} but the version is still {new_version}")
         if not substantive and old_version != new_version:
             problems.append(f"{name}: version moved {old_version} → {new_version} without a change")
+        if old_version != new_version and not has_changelog_section(path, new_version):
+            problems.append(f"{name}: version moved to {new_version} but {CHANGELOG} has no section for it")
     return problems
 
 

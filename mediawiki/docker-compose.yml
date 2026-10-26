@@ -186,10 +186,21 @@ services:
       MCP_TRUSTED_HOSTS:           mediawiki
       MCP_LOG_LEVEL:               ${MEDIAWIKI_MCP_LOG_LEVEL:-info}
       CONFIG:                      /papaia/config.json
+      # get-file-data downloads the file from the URL the wiki's imageinfo
+      # returns, which is built from MW_SERVER -- by default the wiki's own
+      # https port with a certificate from the papaia local CA. Node adds this
+      # CA to its trust store; cleared to "" via overrides/addons/ when
+      # auth_provider=external_oidc, like MW_OIDC_CA_FILE.
+      NODE_EXTRA_CA_CERTS:         /certs/local-ca.crt
+    # MW_SERVER defaults to host.docker.internal, which Linux hosts only
+    # resolve through this mapping.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       mediawiki:
         condition: service_healthy
     volumes:
+      - ${PAPAIA_CONFIG_DIR}/certs:/certs:ro
       - ./mcp/config.json:/papaia/config.json:ro
       - ./mcp/mcp-start.sh:/papaia/mcp-start.sh:ro
       - mediawiki-mcp-credentials:/papaia/credentials:ro

@@ -63,6 +63,9 @@ services:
       MW_DB_PASSWORD:             ${MW_DB_PASSWORD}
       MW_ADMIN_USER:              ${MW_ADMIN_USER:-Admin}
       MW_ADMIN_PASSWORD:          ${MW_ADMIN_PASSWORD}
+      # Service account for other add-ons — README, "Service account".
+      MW_SERVICE_LOGIN:           ${MW_SERVICE_LOGIN:-PapaiaService@service}
+      MW_SERVICE_PASSWORD:        ${MW_SERVICE_PASSWORD:-}
       MW_ENABLE_LOCAL_LOGIN:      ${MW_ENABLE_LOCAL_LOGIN:-false}
       MW_AUTO_LOGIN:              ${MW_AUTO_LOGIN:-true}
       MW_LOGIN_BUTTON_LABEL:      ${MW_LOGIN_BUTTON_LABEL:-Log in with Keycloak}

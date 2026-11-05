@@ -142,6 +142,18 @@ env_prompts:
     hint: "Auto-generated; re-applied on every start"
     secret: true
 
+  # ── Wiki — service account ───────────────────────────────────────────────
+  MW_SERVICE_LOGIN:
+    label: "Service account login"
+    hint: "<user>@<app> other add-ons sign in with over the API"
+    type: text
+    pattern: "^[^@:/|#<>\\[\\]{}]+@[A-Za-z0-9_.-]+$"
+
+  MW_SERVICE_PASSWORD:
+    label: "Service account bot password"
+    hint: "Auto-generated; re-applied on every start, empty = no service access"
+    secret: true
+
   MW_ENABLE_LOCAL_LOGIN:
     label: "Enable local password login"
     hint: "true only for break-glass access; false = Keycloak only"
@@ -269,6 +281,11 @@ env_prompts:
     label: "MCP log level"
     hint: "One of: debug, info, warning, error"
     type: text
+
+# Values add-ons that require mediawiki may read (default_from_addon), with
+# cores serving addon_api 4. Older cores ignore the key; the account works
+# without it.
+exports: [MW_SERVICE_LOGIN, MW_SERVICE_PASSWORD]
 
 env_replace_secrets:
   KC_MEDIAWIKI_CLIENT_SECRET:

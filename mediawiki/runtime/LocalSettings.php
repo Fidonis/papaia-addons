@@ -145,8 +145,15 @@ $wgGroupPermissions['user']['edit'] = true;
 $wgWhitelistRead = [ 'Special:UserLogin', 'Special:PluggableAuthLogin', 'Special:UserLogout' ];
 
 # API clients sign in per user through OAuth (see below); shared bot
-# passwords would bypass that.
-$wgEnableBotPasswords = false;
+# passwords would bypass that. Bot passwords are on only for the service
+# account other add-ons use (MW_SERVICE_LOGIN), which the entrypoint
+# provisions. Special:BotPasswords, the only way to create one otherwise,
+# is gone for everyone: it requires no right of its own beyond
+# editmyprivateinfo, which every user needs for their preferences.
+$wgEnableBotPasswords = true;
+$wgHooks['SpecialPage_initList'][] = static function ( array &$list ) {
+	unset( $list['BotPasswords'] );
+};
 
 ## ── Authentication: Keycloak (PluggableAuth + OpenIDConnect) ──────────────
 wfLoadExtension( 'PluggableAuth' );

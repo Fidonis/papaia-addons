@@ -6,7 +6,7 @@
 # Starts the wiki and its database from the add-on's own docker-compose.yml
 # under a throw-away project, with local login on and a placeholder identity
 # provider, plus a Mailpit mail catcher as the wiki's relay, seeds three users
-# and runs tier_check.py against it. Everything
+# and runs tier_check.py and service_check.py against it. Everything
 # is removed afterwards, volumes included, unless --keep is given.
 #
 #   tests/run.sh [--port=18020] [--keep]
@@ -34,6 +34,8 @@ work="$(mktemp -d)"
 mkdir -p "$work/config/certs"
 password="$(openssl rand -hex 12)"
 admin_password="$(openssl rand -hex 12)"
+service_login="Service@check"
+service_password="$(openssl rand -hex 32)"
 
 cat > "$work/.env" <<EOF
 PAPAIA_PROJECT=$project
@@ -47,6 +49,8 @@ MW_SECRET_KEY=$(openssl rand -hex 32)
 MW_UPGRADE_KEY=$(openssl rand -hex 8)
 MW_DB_PASSWORD=$(openssl rand -hex 12)
 MW_ADMIN_PASSWORD=$admin_password
+MW_SERVICE_LOGIN=$service_login
+MW_SERVICE_PASSWORD=$service_password
 MW_ENABLE_LOCAL_LOGIN=true
 MW_AUTO_LOGIN=false
 MW_SMTP_HOST=$project-mailpit:1025
@@ -91,3 +95,31 @@ done
 
 python3 "$addon_dir/tests/tier_check.py" --base "https://127.0.0.1:$port" \
     --password "$password" --admin-password "$admin_password" --mail-api "$mail_api"
+
+python3 "$addon_dir/tests/service_check.py" --base "https://127.0.0.1:$port" \
+    --login "$service_login" --password "$service_password" --admin-password "$admin_password"
+
+# A rotated password takes effect with the next start, and the old one stops
+# working.
+echo "rotating the service password"
+former_password="$service_password"
+service_password="$(openssl rand -hex 32)"
+sed -i.bak "s/^MW_SERVICE_PASSWORD=.*/MW_SERVICE_PASSWORD=$service_password/" "$work/.env"
+compose up -d --wait mediawiki
+python3 "$addon_dir/tests/service_check.py" --base "https://127.0.0.1:$port" \
+    --login "$service_login" --password "$service_password" --admin-password "$admin_password" \
+    --rejected-password "$former_password"
+
+# An unchanged password survives a restart: the bot password is left alone.
+compose restart mediawiki >/dev/null
+kept=false
+for _ in $(seq 1 60); do
+    # Not grep -q: with pipefail, compose logs would fail on the closed pipe.
+    if compose logs mediawiki 2>/dev/null | grep "bot password of ${service_login%@*} is current" >/dev/null; then
+        kept=true
+        break
+    fi
+    sleep 2
+done
+[[ "$kept" == true ]] || { echo "FAIL  the bot password was rewritten on a restart without a change"; exit 1; }
+echo "  ok    an unchanged bot password is kept on a restart"

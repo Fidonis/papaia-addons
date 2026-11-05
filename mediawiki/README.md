@@ -143,7 +143,9 @@ The wiki container brings itself into a usable state before Apache starts
    the schema after an image upgrade. A new image means a new container, so
    upgrades are covered without paying for it on every restart.
 4. **Every start:** the break-glass admin gets its groups and the password
-   from `MW_ADMIN_PASSWORD`; rotating it takes effect after a restart.
+   from `MW_ADMIN_PASSWORD`; rotating it takes effect after a restart. The
+   service account gets its groups and its bot password from
+   `MW_SERVICE_PASSWORD` (see [Service account](#service-account)).
 5. **OAuth:** the key pair that signs access tokens is generated once and kept
    on the `mediawiki-oauth` volume. The MCP server's OAuth 2.0 consumer
    (`papaia-mcp`, owned by the break-glass admin) is created and approved for
@@ -395,6 +397,45 @@ docker compose -p mediawiki -f addons/mediawiki/docker-compose.yml exec mediawik
   php maintenance/run.php createAndPromote --force --sysop --bureaucrat <WikiUser>
 ```
 
+## Service account
+
+Other add-ons that load or maintain pages over the API sign in as one service
+account rather than as a person:
+
+```env
+# <user>@<app>: the wiki account and the app id of its bot password
+MW_SERVICE_LOGIN=PapaiaService@service
+MW_SERVICE_PASSWORD=GENERATE_SECRET   # generated on install
+```
+
+The manifest lists both under `exports`, so an add-on that requires
+`mediawiki` takes them with `default_from_addon: "mediawiki:MW_SERVICE_LOGIN"`
+(papaia with `addon_api: 4`). It signs in with `action=login` and these two
+values.
+
+On every start the entrypoint:
+
+- creates the account if needed, without a main password, and adds it to
+  the groups `bot`, `sysop` and `all-tiers`, so it passes every tier;
+- sets the bot password `<app>` to `MW_SERVICE_PASSWORD` with the grants
+  `basic`, `highvolume`, `editpage`, `createeditmovepage`, `uploadfile`,
+  `uploadeditmovefile` and `delete`. The grants bound what the session can
+  do, whatever the groups allow: no moves, no protection, no user rights.
+  An unchanged value leaves the bot password alone; a changed one replaces
+  it, and the old one stops working.
+
+An empty `MW_SERVICE_PASSWORD` removes the bot password; the account stays,
+without a way to sign in. After a rotation, reinstall the add-ons that read
+the value, since their bundle values are sticky.
+
+Edits carry the bot flag and show the service account as author, so they stay
+out of recent changes by default. Bot passwords are otherwise off:
+`Special:BotPasswords` is removed for everyone, the break-glass admin
+included, so no one can create another one, and people and their API clients
+keep signing in through Keycloak and OAuth.
+
+---
+
 ---
 
 ## Manual installation
@@ -419,6 +460,7 @@ step 2.
 | `MW_SECRET_KEY`, `MW_UPGRADE_KEY` | Random values |
 | `MW_DB_PASSWORD` | Random value |
 | `MW_ADMIN_PASSWORD` | Break-glass admin password |
+| `MW_SERVICE_PASSWORD` | Service account bot password, at least 32 characters; empty = no service access |
 | `KC_MEDIAWIKI_CLIENT_SECRET` | Secret of the `mediawiki` Keycloak client |
 | `MEDIAWIKI_MCP_SIGNING_KEY` | Random value, at least 32 characters |
 | `MEDIAWIKI_MCP_ALLOWED_REDIRECTS` | OAuth callbacks of the MCP clients, e.g. LibreChat's |
@@ -579,7 +621,12 @@ edit forms, link-table listings, redirect following, `img_auth.php`, thumbnails,
 and its notification mails -- and tries to upload, overwrite, edit, create,
 move and transclude into or from the tier.
 No response may carry a marker. The member and the break-glass admin are
-positive controls. Everything is removed afterwards.
+positive controls. `tests/service_check.py` then signs in as the
+[service account](#service-account), creates, edits and deletes a tier page
+with the bot flag, is refused moving and protecting, and finds
+`Special:BotPasswords` gone; after a rotation of `MW_SERVICE_PASSWORD` the
+former password is refused, and an unchanged one survives a restart.
+Everything is removed afterwards.
 
 The `mediawiki-image` workflow runs it on every change to the add-on, before
 an image is published. Run it after changing the tier hooks in
@@ -628,7 +675,10 @@ before connecting; see [After a reinstall](#after-a-reinstall).
   papaia local CA's trust, publish the wiki through the reverse proxy.
 - **Per-user identity:** the MCP server acts as the signed-in user, never as
   a shared account. The wiki's own permission checks decide every call, and
-  edits are attributed to the user. Shared bot passwords are switched off.
+  edits are attributed to the user. Bot passwords are switched off for
+  people; the only one is the service account's (see
+  [Service account](#service-account)), exported to add-ons that require
+  `mediawiki`.
 - **Least privilege for the MCP server:** it acts with the grants in
   `MEDIAWIKI_MCP_GRANTS` only; moving, deleting and protecting pages are off
   by default.

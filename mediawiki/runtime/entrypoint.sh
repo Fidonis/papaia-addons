@@ -10,6 +10,8 @@
 #   3. empty database -> install.php (schema + local admin)
 #      otherwise, once per container -> update.php (schema after an upgrade)
 #   4. local admin: groups, password from MW_ADMIN_PASSWORD
+#   4b. service account for other add-ons: groups, bot password from
+#      MW_SERVICE_PASSWORD
 #   5. OAuth: token signing keys + the MCP server's consumer, whose
 #      credentials go to the volume the MCP container reads
 #
@@ -17,7 +19,7 @@
 # and a restart re-applies a rotated secret.
 #
 # Mounted read-only from the add-on's runtime/ directory together with
-# LocalSettings.php and EnsureOAuthConsumer.php, so an add-on update reaches
+# LocalSettings.php and the PHP bootstrap scripts, so an add-on update reaches
 # an existing install on the next start, without a new image.
 # ═══════════════════════════════════════════════════════════════════════════
 set -euo pipefail
@@ -34,6 +36,9 @@ ALL_TIERS_GROUP=all-tiers
 # What the MCP server may do as the signed-in user; see README, "Through the
 # MCP server".
 DEFAULT_MCP_GRANTS=basic,editpage,createeditmovepage,uploadfile,uploadeditmovefile
+# What the service account's bot password may do; see README, "Service
+# account".
+SERVICE_GRANTS=basic,highvolume,editpage,createeditmovepage,uploadfile,uploadeditmovefile,delete
 
 log() { printf 'papaia-mediawiki: %s\n' "$*" >&2; }
 die() { log "ERROR: $*"; exit 1; }
@@ -191,6 +196,21 @@ fi
 # the web UI is unaffected.
 MW_ENABLE_LOCAL_LOGIN=true php maintenance/run.php createAndPromote --force --sysop --bureaucrat \
     --custom-groups="$ALL_TIERS_GROUP" "$MW_ADMIN_USER" "$MW_ADMIN_PASSWORD" >&2
+
+# ── 4b. Service account ───────────────────────────────────────────────────
+# Other add-ons sign in as <user>@<app> (MW_SERVICE_LOGIN) with the bot
+# password MW_SERVICE_PASSWORD. The account has no main password, so the bot
+# password, with its grants, is the only way in. The bot password is
+# rewritten only when the .env value or the grants changed; an empty
+# MW_SERVICE_PASSWORD removes it.
+MW_SERVICE_LOGIN="${MW_SERVICE_LOGIN:-PapaiaService@service}"
+service_user="${MW_SERVICE_LOGIN%@*}"
+service_app="${MW_SERVICE_LOGIN##*@}"
+[[ -n "$service_user" && -n "$service_app" && "$MW_SERVICE_LOGIN" == *@* ]] \
+    || die "MW_SERVICE_LOGIN must be <user>@<app>"
+[[ "$service_user" != "$MW_ADMIN_USER" ]] || die "MW_SERVICE_LOGIN must not name the admin account"
+php "$RUNTIME_DIR/EnsureServiceAccount.php" --user="$service_user" --appid="$service_app" \
+    --groups="bot,sysop,$ALL_TIERS_GROUP" --grants="$SERVICE_GRANTS" >&2
 
 # ── 5. OAuth ──────────────────────────────────────────────────────────────
 # The key pair signs the OAuth 2.0 access tokens. It is created once and

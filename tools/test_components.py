@@ -209,6 +209,28 @@ class CheckTests(unittest.TestCase):
                 (addon / path).unlink()
                 self.assertReported(addon, f"`{path}` does not exist")
 
+    def test_client_secrets_must_name_a_listed_client_and_documented_keys(self) -> None:
+        block = (
+            "  keycloak:\n    client_secrets:\n      {path}:\n"
+            "        secret_env: {var}\n"
+        )
+        cases = {
+            "integration/client.json|DEMO_URL": None,
+            "integration/other.json|DEMO_URL": "is not listed under integration.keycloak.clients",
+            "integration/client.json|DEMO_GONE": "secret_env `DEMO_GONE` is not in",
+        }
+        for case, expected in cases.items():
+            path, var = case.split("|")
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
+                manifest = MANIFEST.replace(
+                    "  keycloak:\n", block.format(path=path, var=var), 1
+                )
+                addon = make_addon(Path(tmp), manifest=manifest)
+                if expected is None:
+                    self.assertEqual(components.check_addon(addon), [])
+                else:
+                    self.assertReported(addon, expected)
+
     def test_network_name_must_match_compose(self) -> None:
         addon = self.edited(components.COMPOSE, "-demo-net", "-demo-network")
         self.assertReported(addon, "networks.app_network", "-demo-net")

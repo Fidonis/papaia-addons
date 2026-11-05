@@ -162,20 +162,19 @@ The wiki container brings itself into a usable state before Apache starts
 
 ## Keycloak
 
-Import one client into the `papaia` realm — it is for the **wiki login**
-only:
+The wiki login uses one client in the `papaia` realm,
+`integration/infra/keycloak/mediawiki.json`. The MCP server needs none.
 
-| File | Where |
-|---|---|
-| `integration/infra/keycloak/mediawiki.json` | Clients → Import client |
+**Cores serving `addon_api` 4:** nothing to do. `addon install` generates
+`KC_MEDIAWIKI_CLIENT_SECRET`, and `papaia-ctl addon start mediawiki` (as well
+as every `papaia-ctl start`) creates the client from the export, with that
+secret and `MW_SERVER` as its root URL. A secret changed in the `.env` is set
+on the client on the next start.
 
-After the import:
-
-- **Root URL of `mediawiki`:** set it to `MW_SERVER`. The redirect URIs are
-  relative to it (`/index.php/Special:PluggableAuthLogin`); the imported value
-  is the default `https://host.docker.internal:8020`.
-- **Secret:** copy the client secret (Credentials tab) into
-  `KC_MEDIAWIKI_CLIENT_SECRET`.
+**Older cores:** import the client by hand (Clients → Import client), set its
+root URL to `MW_SERVER` (the redirect URIs are relative to it, the imported
+value is `https://host.docker.internal:8020`), then copy its secret
+(Credentials tab) over the generated `KC_MEDIAWIKI_CLIENT_SECRET`.
 
 The `groups` protocol mapper on the client puts the user's realm roles into
 the `groups` claim, the same shape as the paperless add-on. The MCP server

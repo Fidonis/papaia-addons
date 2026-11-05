@@ -243,10 +243,9 @@ env_prompts:
     type: text
 
   # ── Keycloak OIDC client secrets ──────────────────────────────────────────
-  # Filled after the Keycloak client import — see env_replace_secrets below.
   KC_MEDIAWIKI_CLIENT_SECRET:
     label: "Keycloak client secret (mediawiki)"
-    hint: "Copy from Keycloak Admin UI → Clients → mediawiki → Credentials → Client Secret"
+    hint: "Auto-generated; set on the Keycloak client by 'papaia-ctl start'"
     secret: true
 
   # ── MCP server ────────────────────────────────────────────────────────────
@@ -287,13 +286,16 @@ env_prompts:
 # without it.
 exports: [MW_SERVICE_LOGIN, MW_SERVICE_PASSWORD]
 
-env_replace_secrets:
-  KC_MEDIAWIKI_CLIENT_SECRET:
-    hint: "Keycloak Admin UI → Clients → mediawiki → Credentials → Client Secret"
-
 integration:
   keycloak:
     clients:
       - integration/infra/keycloak/mediawiki.json
+    # Cores serving addon_api 4 create this client on `start` with the secret
+    # and root URL from the .env; older cores ignore the key and list the
+    # client for a manual import.
+    client_secrets:
+      integration/infra/keycloak/mediawiki.json:
+        secret_env: KC_MEDIAWIKI_CLIENT_SECRET
+        root_url_env: MW_SERVER
   librechat: integration/ai/librechat/librechat.yaml
   nginx: integration/infra/nginx/mediawiki.conf

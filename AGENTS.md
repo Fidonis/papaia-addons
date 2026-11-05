@@ -65,6 +65,7 @@ Every add-on manifest carries the same shape:
 | `env_prompts.<VAR>` | Per-variable metadata: `label` (prompt text), `hint` (secondary explanation), `default` / `default_from_core` (pulls a value from the core's own `.env`), `type` (`text`\|`integer`\|`url`\|`decimal`), `secret` (forces masking, or opts out of the name heuristic), `min`/`max` (numeric bounds), `pattern` (regex). All fields are optional; unset ones fall back to the raw env var name |
 | `env_replace_secrets.<VAR>` | Vars that cannot be generated automatically and must be copied in by hand after install — typically a Keycloak client secret, with a `hint` pointing at where to find it in the Keycloak Admin UI |
 | `integration.keycloak.clients` | Paths to Keycloak client export JSON files imported on install |
+| `integration.keycloak.client_secrets.<path>` | For a client listed under `clients`: `secret_env` (the `.env` key with its secret, `GENERATE_SECRET` in `.env.example`) and optionally `root_url_env` (the key whose value becomes the client's root URL). A core serving `addon_api` 4 then creates the client on `start` and keeps its secret aligned with the `.env`; older cores ignore the key and list the client for a manual import |
 | `integration.keycloak.client_mappers` | Paths to mapper JSON applied to an *existing* client (e.g. the LibreChat client's audience mapper) rather than a new client of this add-on's own |
 | `integration.librechat` | Path to the MCP server registration consumed by LibreChat |
 | `integration.nginx` | Path to an optional Nginx vhost fragment, for add-ons that publish a browser-facing UI |
@@ -166,5 +167,5 @@ shellcheck --severity=warning <script>
 
 - **Never commit `.env` files.** Every add-on ships only `.env.example`, with placeholder values (`.gitignore` enforces this).
 - **Never commit generated secrets** — Keycloak realm exports, client secrets, or any other credential produced by an actual install.
-- Variables marked `secret: true` in a manifest are either auto-generated on install or, for `env_replace_secrets` entries, filled in by hand from the Keycloak Admin UI after the client import — never hard-coded.
+- Variables marked `secret: true` in a manifest are either auto-generated on install (including client secrets named under `client_secrets`) or, for `env_replace_secrets` entries, filled in by hand from the Keycloak Admin UI after the client import — never hard-coded.
 - **No copyleft dependencies** (GPL/LGPL/AGPL/EUPL/SSPL and similar) — enforced by the license-check workflow once a Python `src/` project exists.

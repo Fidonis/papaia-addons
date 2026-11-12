@@ -24,6 +24,13 @@ and reachable **from both sides**:
 | Single host with the bundled Keycloak (core default `https://host.docker.internal:8110`) | `https://host.docker.internal:8020` (the default) | Nothing: the wiki's port speaks https with a certificate from the papaia local CA, which LibreChat and the browsers that use the bundled Keycloak already trust, and the add-on's LibreChat fragment points there. |
 | Behind a reverse proxy with a real host name | `https://wiki.example.org` | Proxy host for `mediawiki:80` ([Reverse proxy](#reverse-proxy)), LibreChat overlay with the URL ([LibreChat](#librechat)). |
 
+A papaia local CA created by papaia 1.9.0 or later signs trusted certificates
+for `host.docker.internal`, `localhost` and IP addresses only. The wiki's own
+port cannot serve any other host name with it -- clients reject the
+certificate -- so a real host name always goes through the reverse proxy. A CA
+from an earlier papaia release has no such constraint and keeps working until
+`certs/` is replaced.
+
 Either way:
 
 - Only the **wiki login** has a Keycloak client (`mediawiki.json`). The MCP
@@ -135,7 +142,11 @@ The wiki container brings itself into a usable state before Apache starts
    `MW_SERVER`, issued by the papaia local CA (`$PAPAIA_CONFIG_DIR/certs`)
    when it is present, self-signed otherwise. It is kept on the
    `mediawiki-tls` volume and renewed when the host or the CA changes or
-   expiry is less than 30 days away.
+   expiry is less than 30 days away. When the CA's name constraints do not
+   allow the host (see [Before you
+   start](#before-you-start-one-url-for-the-browser-and-librechat)), the
+   certificate is kept and a warning names the permitted names; such a host
+   belongs behind the [reverse proxy](#reverse-proxy).
 2. **Empty database:** `install.php` creates the schema and the break-glass
    admin. The add-on's own `LocalSettings.php` is used afterwards; the one
    `install.php` writes is discarded.
@@ -414,7 +425,7 @@ step 2.
 | Variable | Description |
 |---|---|
 | `OIDC_ISSUER` | Keycloak issuer URL, browser-facing (same value as the core `OIDC_ISSUER`) |
-| `PAPAIA_CONFIG_DIR` | papaia config directory; its `certs/local-ca.crt` is trusted for the OIDC calls, and `certs/local-ca.key` issues the certificate of the https port |
+| `PAPAIA_CONFIG_DIR` | papaia config directory; its `certs/local-ca.crt` is trusted for the OIDC calls, and `certs/local-ca.key` issues the certificate of the https port (since papaia 1.9.0 trusted for `host.docker.internal`, `localhost` and IP addresses only) |
 | `MW_SERVER` | URL of the wiki that the browser and LibreChat both reach over https, see [Before you start](#before-you-start-one-url-for-the-browser-and-librechat) |
 | `MW_SECRET_KEY`, `MW_UPGRADE_KEY` | Random values |
 | `MW_DB_PASSWORD` | Random value |
@@ -477,8 +488,12 @@ with `client_max_body_size` raised for uploads and response buffering off for
 
 The wiki's own host port speaks https with a certificate from the papaia
 local CA (or a self-signed one), which suits a single host and internal use.
-Production use with users outside that trust belongs behind the proxy; the
-host port can then be bound to `127.0.0.1` (`HOST_IP`) or left unused.
+A local CA created by papaia 1.9.0 or later signs for `host.docker.internal`,
+`localhost` and IP addresses only; for any other host name on that port,
+browsers and LibreChat reject the certificate with a permitted subtree
+violation, so a real host name always goes through the proxy. Production use
+with users outside that trust belongs behind the proxy; the host port can
+then be bound to `127.0.0.1` (`HOST_IP`) or left unused.
 
 ---
 

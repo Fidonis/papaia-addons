@@ -86,7 +86,7 @@ env_prompts:
   # ── Wiki — site ───────────────────────────────────────────────────────────
   MW_SERVER:
     label: "Wiki public URL"
-    hint: "URL the browser AND LibreChat use (no trailing slash); the Keycloak redirect URI and the MCP URL <MW_SERVER>/mcp derive from it. The host port speaks https"
+    hint: "URL the browser AND LibreChat use (no trailing slash); the Keycloak redirect URI and the MCP URL <MW_SERVER>/mcp derive from it. The host port speaks https, trusted for host.docker.internal, localhost and IPs only; other names go behind the reverse proxy"
     default: "https://host.docker.internal:8020"
     type: url
     pattern: "^https?://[^/]+$"

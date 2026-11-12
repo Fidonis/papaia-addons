@@ -90,15 +90,32 @@ fi
 tls_ca=""
 if [[ -r "$LOCAL_CA_CRT" && -r "$LOCAL_CA_KEY" ]]; then
     tls_ca="$LOCAL_CA_CRT"
+elif [[ -r "$LOCAL_CA_CRT" ]]; then
+    log "WARNING: $LOCAL_CA_CRT is mounted but $LOCAL_CA_KEY is not readable: falling back to a self-signed certificate"
 fi
+tls_constrained() {
+    # A papaia local CA from papaia 1.9.0 or later carries name constraints
+    # and signs trusted certificates for host.docker.internal, localhost and
+    # IP addresses only. Signing still succeeds for any other name, but
+    # clients and openssl verify reject the result with a permitted subtree
+    # violation. The output is captured first: under pipefail, openssl's
+    # own failure would otherwise override a grep match.
+    [[ -n "$tls_ca" && -s "$TLS_DIR/tls.crt" ]] || return 1
+    local verdict
+    verdict="$(openssl verify -CAfile "$tls_ca" "$TLS_DIR/tls.crt" 2>&1 || true)"
+    grep -q 'permitted subtree violation' <<<"$verdict"
+}
 tls_current() {
     # The existing certificate fits: right host, valid for another 30 days,
     # and issued by the CA in use now (or self-signed when there is none).
+    # A certificate only the CA's name constraints reject also counts as
+    # current: a reissued one would be rejected the same way, so it is kept
+    # and the warning below fires instead.
     [[ -s "$TLS_DIR/tls.crt" && -s "$TLS_DIR/tls.key" ]] || return 1
     openssl x509 -in "$TLS_DIR/tls.crt" -noout -checkend 2592000 >/dev/null 2>&1 || return 1
     openssl x509 -in "$TLS_DIR/tls.crt" -noout "${tls_check[@]}" 2>/dev/null | grep -q 'does match' || return 1
     if [[ -n "$tls_ca" ]]; then
-        openssl verify -CAfile "$tls_ca" "$TLS_DIR/tls.crt" >/dev/null 2>&1
+        openssl verify -CAfile "$tls_ca" "$TLS_DIR/tls.crt" >/dev/null 2>&1 || tls_constrained
     else
         openssl verify -CAfile "$TLS_DIR/tls.crt" "$TLS_DIR/tls.crt" >/dev/null 2>&1
     fi
@@ -125,6 +142,9 @@ if ! tls_current; then
     install -m 0600 "$tls_tmp/tls.key" "$TLS_DIR/tls.key"
     install -m 0644 "$tls_tmp/tls.crt" "$TLS_DIR/tls.crt"
     rm -rf "$tls_tmp"
+fi
+if tls_constrained; then
+    log "WARNING: the papaia local CA signs for host.docker.internal, localhost and IP addresses only; clients will reject the certificate for $tls_host. Publish the wiki through the reverse proxy for this name (see README, 'Reverse proxy')"
 fi
 
 # ── 2. Database ───────────────────────────────────────────────────────────

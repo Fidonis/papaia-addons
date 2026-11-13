@@ -6,7 +6,9 @@ requires:
   # core's ADDON_API window by cores that support compatibility gating.
   # 2: networks.app_network carries a ${PAPAIA_PROJECT:-papaia} template
   # that the core resolves against its .env (needs a core serving addon_api 2).
-  addon_api: 2
+  # 4: the `knowledge:` key below declares the sources this add-on contributes
+  # to the knowledge-map profile (ADR 0012); cores below generation 4 ignore it.
+  addon_api: [2, 4]
 # Fallback axis for cores that do not read `requires` yet. 1.3.0 is the first
 # core serving addon_api 2 (deployment-scoped add-on networks).
 papaia_compat: ">=1.3.0"
@@ -268,3 +270,31 @@ integration:
         - integration/infra/keycloak/librechat-audience-mapper.json
   librechat: integration/ai/librechat/librechat.yaml
   nginx: integration/infra/nginx/paperless.conf
+
+# Knowledge sources this add-on contributes to the knowledge-map profile
+# (addon_api 4, ADR 0012). Rendered only while that profile is active;
+# operators refine topics and delimitations in
+# overlay/knowledge-map/overrides.yaml.
+knowledge:
+  sources:
+    - id: paperless.docs
+      system: "Document archive (Paperless-ngx)"
+      mcp_server: Paperless
+      coverage: >-
+        The scanned and filed originals: invoices, contracts, letters,
+        receipts and other documents with their tags and correspondents.
+        The place where "show me the actual document" is answered.
+      topics:
+        - {id: docs.archive, label: "Filed documents", synonyms: [scans, originals, PDF]}
+        - {id: finance.receipts, label: "Invoices & receipts"}
+      not_covered:
+        - {what: "process documentation or how-tos"}
+        - {what: "customer master data or tickets"}
+      example_queries:
+        - "find the signed contract with supplier X"
+        - "show the invoice from March"
+      counter_examples:
+        - "how does our approval process work"
+      key_tools: [search_documents, get_document]
+      required_roles: []
+      source_of_truth_for: [docs.archive]

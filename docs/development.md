@@ -1,6 +1,6 @@
-# papaia-addons — project context
+# Developing papaia-addons
 
-This document provides structural and architectural context for contributors and automated tooling working in this repository.
+Structure, contracts and conventions for everyone who changes an add-on or the tooling in this repository.
 
 ---
 
@@ -38,9 +38,13 @@ papaia-addons/
 │       ├── infra/keycloak/*.json        # Client export(s) + audience mapper(s), imported on install
 │       ├── ai/librechat/librechat.yaml  # MCP server registration for LibreChat
 │       └── infra/nginx/*.conf           # Optional vhost fragment (public-facing add-ons only)
+├── docs/
+│   └── development.md         # This document
 ├── tools/
 │   ├── components.py          # Keeps component versions, .env.example and README tables equal to Compose; checks manifests and changelogs
-│   └── test_components.py     # Unit tests for it
+│   ├── root_markdown.py       # Allows only README.md and CHANGELOG.md as Markdown files at the repository root
+│   └── test_*.py              # Unit tests for both
+├── CHANGELOG.md
 └── README.md
 ```
 
@@ -138,6 +142,7 @@ shellcheck --severity=warning <script>
 - **PHP** (`mediawiki/runtime/`): tabs, following the MediaWiki coding conventions the code extends
 - **Manifests and changelogs**: `python tools/components.py check` also validates each manifest against its add-on directory and each `CHANGELOG.md` (see the contracts above)
 - **Component versions**: `python tools/components.py check` must pass; after changing an image tag in a Compose file, run `python tools/components.py fix` instead of editing the manifest, `.env.example` and README by hand. The unit tests run with `python -m unittest discover -s tools`
+- **Repository root**: the only Markdown files at the root are `README.md` and `CHANGELOG.md`; `python tools/root_markdown.py` fails for any other, and CI runs it. Further documentation goes under `docs/` or into the add-on directory it belongs to
 - Once a Python `src/` is introduced, `ruff check .` and the license-check workflow (see below) start applying
 
 ---

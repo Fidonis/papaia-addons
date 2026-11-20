@@ -51,6 +51,14 @@ jobs:
       - name: Run the unit tests
         run: python -m unittest discover -s tools
 
+  root-markdown:
+    name: Root Markdown files
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Allow only README.md and CHANGELOG.md at the repository root
+        run: python tools/root_markdown.py
+
   pr-title:
     name: Conventional Commit PR title
     if: github.event_name == 'pull_request'

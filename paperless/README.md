@@ -5,7 +5,7 @@ Paperless-ngx document management addon for [papaia](https://github.com/Fidonis/
 Adds Paperless-ngx with full-text search and OCR, an OIDC-secured MCP server for
 AI-assisted document access via LibreChat, and a Keycloak SSO login for Paperless users.
 
-**Requires papaia ≥ 1.3.0** (`addon_api` 2).
+**Requires papaia ≥ 1.10.0** (`addon_api` 12).
 
 ---
 
@@ -222,6 +222,62 @@ Or manually:
 docker compose -f addons/paperless/docker-compose.yml down -v
 # Remove the compose override and re-render papaia config
 ```
+
+---
+
+## Catalog entry (`exposes:`)
+
+The manifest describes the MCP server once, in `exposes:` (contract generation 7,
+schema `exposes.v1` of papaia-kit). The core renders the platform catalog from it,
+and every module that talks to Paperless reads the catalog instead of keeping its
+own description of the server.
+
+| Field | Value |
+|---|---|
+| `id` | `paperless.documents` |
+| Address | `paperless-mcp:8000/mcp` (internal) |
+| Audience | `mcp-paperless` |
+| Identity | the person, or a service account a consuming module declares |
+| Operations | every tool of `paperless-mcp-rbac`, with effect (`read`, `write`, `delete`), input schema and highest data class; `delete_document` is confirmed with `check_access` first |
+| Standard operations | `describe_access`, `check_access` |
+
+Data classes use the eight-class scale of papaia-kit. A general archive can hold
+health data (Art. 9 GDPR) and secrets entrusted to professions bound to
+confidentiality (Section 203 StGB), and Paperless sets no limit on what is filed.
+Every operation that carries documents, their text, titles, metadata or notes
+therefore declares the highest class, `professional_secret`; correspondents are
+`partner_contact`, tags and document types `internal`. A Studio app, a Flow run or
+a model that is cleared only up to a lower class cannot call these operations.
+
+### Personal data and backup
+
+| Category | Data class | Kept until | Erasure |
+|---|---|---|---|
+| Accounts (created at the first SSO login) | `personal` | the account is deleted | on request: after the person is deleted in Keycloak, the archive administration deletes the Paperless user; their documents and notes are handled as below |
+| Documents | `professional_secret` | the operator's retention rule | on request: kept under the retention rule or handed to a new owner (archive administration) |
+| Notes | `professional_secret` | as their document | on request, with their document |
+
+| Volume | Backup |
+|---|---|
+| `paperless-data` (search index, classifier, application data) | included |
+| `paperless-pgdata` (database) | included |
+| `paperless-valkeydata` (task queue of the broker) | excluded, rebuilt on start |
+
+The documents themselves live in the bind mounts `MEDIA_DIRECTORY`,
+`EXPORT_DIRECTORY` and `CONSUME_DIRECTORY` (default `./data/…` next to the
+compose file). They are host paths, not named volumes, so a backup of the
+named volumes restores the database without the original files; include
+`MEDIA_DIRECTORY` in the host's backup.
+
+Deleting a person in Keycloak does not delete their Paperless user: Paperless
+keeps the account, and the documents it owns, until a Paperless administrator
+deletes it. Delete the user, or hand its documents to a new
+owner first, as part of the erasure of the person.
+
+The exit export is the directory written by Paperless-ngx's own exporter
+(`docker compose exec paperless document_exporter ../export`), restored with
+`document_importer` of the same Paperless-ngx version. `schemas/paperless-export-1.json`
+describes its `manifest.json`.
 
 ---
 

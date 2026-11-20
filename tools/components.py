@@ -15,7 +15,7 @@ declared next to it or derived from it, and this script keeps the two honest:
 
 It also checks what the rest of a manifest says against the files next to it
 (`name`, `env_prompts`, `integration`, `networks.app_network`, the variables
-Compose substitutes) and that each add-on keeps a `CHANGELOG.md` with a section
+Compose substitutes, the `exposes:` section through `exposes.py`) and that each add-on keeps a `CHANGELOG.md` with a section
 for its current version.
 
 Commands:
@@ -36,6 +36,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import exposes
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -224,7 +225,7 @@ def check_manifest(path: Path, manifest: dict[str, Any]) -> list[str]:
 
     for var in sorted(compose_variables(compose_text) - documented - CORE_VARIABLES):
         problems.append(f"{COMPOSE}: ${{{var}}} is not documented in {ENV_EXAMPLE}")
-    return problems
+    return problems + exposes.check(path, manifest)
 
 
 def changelog_sections(text: str) -> tuple[list[str], list[str]]:

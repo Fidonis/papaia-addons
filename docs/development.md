@@ -29,7 +29,7 @@ Current catalog:
 ```
 papaia-addons/
 ├── <addon-name>/
-│   ├── papaia-app.yaml        # Manifest: identity, compatibility, networks, env_prompts, integration
+│   ├── papaia-app.yaml        # Manifest: identity, compatibility, networks, env_prompts, integration, exposes
 │   ├── docker-compose.yml     # Compose fragment(s) for this add-on
 │   ├── .env.example           # Every declared env var with a placeholder value
 │   ├── README.md              # What it does, a services table, the minimum papaia version
@@ -42,8 +42,9 @@ papaia-addons/
 │   └── development.md         # This document
 ├── tools/
 │   ├── components.py          # Keeps component versions, .env.example and README tables equal to Compose; checks manifests and changelogs
+│   ├── exposes.py             # Holds the `exposes:` section to the add-on directory; compares generation comments with the core
 │   ├── root_markdown.py       # Allows only README.md and CHANGELOG.md as Markdown files at the repository root
-│   └── test_*.py              # Unit tests for both
+│   └── test_*.py              # Unit tests for the tools
 ├── CHANGELOG.md
 └── README.md
 ```
@@ -59,7 +60,7 @@ Every add-on manifest carries the same shape:
 | Field | Meaning |
 |---|---|
 | `name`, `version`, `addon_repo` | Identity — `addon_repo` is the add-on's own upstream repository name |
-| `requires.addon_api` | The contract generation this add-on is built against; checked against the core's supported window by cores that read it |
+| `requires.addon_api` | The contract generation(s) this add-on is built against; checked against the core's supported window by cores that read it. A manifest with `exposes:` declares a list of generations from 7 on (`[12]` for this release), and the comments of the `requires:` block give the meaning of each generation they name, worded exactly as the core's `ADDON_API` table |
 | `papaia_compat` | SemVer-range fallback (`>=x.y.z`) for cores that don't read `requires` yet |
 | `description` | One-line summary, shown in installer UIs |
 | `components[]` | The software this add-on packages, next to `version`, which counts the add-on bundle itself. Per entry: `id`, `name`, `role` (`primary`\|`sidecar`), `kind` (`upstream`\|`fidonis`), `image_var` (the Compose variable whose default names the image), `version` (that default's tag, quoted), `source` (https URL) and, for a floating tag only, `pinned: false`. The Compose default is the source of truth; `tools/components.py` keeps `version`, the image lines of `.env.example` and the README table equal to it. Consumers such as papaia-manager read it to show what an add-on runs |
@@ -72,10 +73,13 @@ Every add-on manifest carries the same shape:
 | `integration.keycloak.client_mappers` | Paths to mapper JSON applied to an *existing* client (e.g. the LibreChat client's audience mapper) rather than a new client of this add-on's own |
 | `integration.librechat` | Path to the MCP server registration consumed by LibreChat |
 | `integration.nginx` | Path to an optional Nginx vhost fragment, for add-ons that publish a browser-facing UI |
+| `exposes` | (`addon_api` 7) The one description of what the add-on offers, validated against the `exposes.v1` schema of papaia-kit: per surface its `id`, `kind`, internal `address`, `audience`, accepted `identity`, `operations[]` (every tool of the MCP server with effect, retry class, input and output schema, highest data class), the standard operations `describe_access` and `check_access`, `requires.addon_api`, `volumes[]` (every named Compose volume as one backup item), `export.exit` and `storage` (personal data categories with retention and erasure path). The core renders the platform catalog from it. Data classes, names and plain-text rules come from papaia-kit; an add-on never keeps its own list |
 
 Readers ignore unknown manifest keys, so new fields can be introduced without breaking older add-ons.
 
 `python tools/components.py check` also holds a manifest to the files next to it: `name` equals the directory name, every `env_prompts` and `env_replace_secrets` key is in `.env.example` (active or commented out), every path under `integration` exists, `networks.app_network` is the same string as a network `name:` in `docker-compose.yml`, and every `${VAR}` that Compose substitutes is in `.env.example`, except the variables the core `.env` hands to every add-on (`COMPOSE_PROJECT_NAME`, `GID`, `HOST_IP`, `PAPAIA_PROJECT`, `UID`).
+
+Through `tools/exposes.py` it also checks that no manifest carries `@UNDECIDED@` and, for a manifest with `exposes:`, what the section claims about the add-on directory: `requires.addon_api` as above and repeated unchanged in every entry, unique entry ids and operation names, `address.service` a Compose service, `audience` the client id of a shipped Keycloak client, `resource.id_field` a property of the operation's input schema, every named Compose volume exactly one item of `volumes[]`, `storage.secrets[].location` one of those volumes, and `export.exit.schema` a JSON file in the add-on directory. Schema, names and data classes are left to the manifest conformance check of papaia-kit. `python tools/exposes.py generations --core <core checkout>` compares the generation comments of every manifest with the core's `ADDON_API` table.
 
 ### The add-on changelog (`<addon>/CHANGELOG.md`)
 

@@ -4,17 +4,21 @@ Paperless takes the person from the header `X-Papaia-Remote-User`. These tests h
 add-on to the hardening around it: Paperless listens on the loopback of its container
 only, no container publishes a port, and `paperless-gate` in Paperless' network
 namespace passes a request only with the secret of one of its callers (the proxy, the
-MCP server). The live counterpart is tools/test_paperless_gate_live.py.
+MCP server) and a person only by a name on the list of the realm sync. The live
+counterpart is tools/test_paperless_gate_live.py.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
+import signal
 import stat
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -116,6 +120,18 @@ class ComposeHardening(unittest.TestCase):
         self.assertEqual(mcp["type"], "volume")
         self.assertEqual(mcp["source"], "paperless-gate-mcp")
         self.assertFalse(mcp.get("read_only", False))
+
+    def test_gate_mounts_the_directory_of_the_name_list_read_only(self) -> None:
+        # The realm sync replaces users.json by renaming a new file into place; a bind
+        # mount of the single file would keep showing the replaced one.
+        mounts = self.services["paperless-gate"]["volumes"]
+        by_target = {m["target"]: m for m in mounts if isinstance(m, dict)}
+        names = by_target["/run/paperless-gate/users"]
+        self.assertEqual(names["type"], "bind")
+        self.assertEqual(names["source"], "${PAPAIA_CONFIG_DIR}/security/paperless-gate")
+        self.assertIs(names.get("read_only"), True)
+        self.assertIs(names.get("bind", {}).get("create_host_path"), False)
+        self.assertEqual(len(mounts), 4, "the gate mounts nothing beyond its files, two callers and the list")
 
     def test_gate_writes_only_to_memory(self) -> None:
         tmpfs = self.services["paperless-gate"].get("tmpfs", [])
@@ -240,6 +256,64 @@ class GateTemplate(unittest.TestCase):
     def test_callers_are_filled_in_by_the_script(self) -> None:
         self.assertEqual(self.text.count("# @callers@"), 1)
 
+    def test_listed_names_are_filled_in_by_the_script(self) -> None:
+        self.assertEqual(self.text.count("# @users@"), 1)
+        block = re.search(r"map \$gate_remote_user \$gate_listed \{(.*?)\}", self.text, re.DOTALL)
+        self.assertIsNotNone(block)
+        self.assertIn('default "";', block.group(1))
+        self.assertIn("# @users@", block.group(1))
+
+    def test_the_map_hash_holds_a_full_list(self) -> None:
+        # Default buckets (64 bytes) refuse a name of 255 characters at load time.
+        self.assertRegex(self.text, r"(?m)^\s*map_hash_bucket_size 512;$")
+        self.assertRegex(self.text, r"(?m)^\s*map_hash_max_size 131072;$")
+
+    def test_a_name_must_equal_its_listed_spelling_byte_for_byte(self) -> None:
+        # nginx compares map strings without regard to case, Paperless does not: "Anna"
+        # would match the listed "anna" and Paperless would create an account "Anna".
+        block = re.search(
+            r'map "\$gate_remote_user:\$gate_listed" \$gate_name_known \{(.*?)\}', self.text, re.DOTALL
+        )
+        self.assertIsNotNone(block)
+        lines = sorted(line.strip() for line in block.group(1).strip().splitlines())
+        self.assertEqual(lines, sorted(['default 0;', '":" 1;', r'"~^([^:]+):\1$" 1;']))
+
+    def test_an_unknown_name_is_refused_before_paperless(self) -> None:
+        server = self.text[self.text.index("server {"):]
+        before = server[: server.index("location / {")]
+        self.assertIn("if ($gate_name_known = 0) {", before)
+        self.assertIn("""return 403 '{"error":"paperless_unknown_user"}\\n';""", before)
+        # The syntax check stays first: a malformed name is a 400, not a lookup.
+        self.assertLess(before.index("$gate_name_ok = 0"), before.index("$gate_name_known = 0"))
+        self.assertRegex(server, r"(?m)^\s*default_type application/json;$")
+
+    def test_an_unknown_name_writes_one_audit_row_without_the_name(self) -> None:
+        fmt = re.search(r"log_format gate_audit escape=json '(.*?)';", self.text, re.DOTALL)
+        self.assertIsNotNone(fmt)
+        row = fmt.group(1)
+        for field in ('"format":"papaia.audit/1"', '"writer":"paperless/paperless-gate"',
+                      '"event":"paperless_unknown_user"', '"result":"denied"',
+                      '"error_code":"paperless_unknown_user"', '"correlation_id":"$gate_correlation_id"'):
+            self.assertIn(field, row)
+        self.assertNotRegex(row, r"\$http_|\$gate_remote_user|\$gate_listed|\$request|\$uri|\$args")
+        self.assertRegex(self.text, r"(?m)^\s*access_log /dev/stdout gate_audit if=\$gate_unknown_row;$")
+        block = re.search(r'map "\$gate_name_ok\$gate_name_known" \$gate_unknown_row \{(.*?)\}',
+                          self.text, re.DOTALL)
+        self.assertIsNotNone(block)
+        lines = sorted(line.strip() for line in block.group(1).strip().splitlines())
+        self.assertEqual(lines, sorted(['default "";', '10 1;']))
+
+    def test_correlation_id_is_checked_before_it_is_logged(self) -> None:
+        # The block ends at the first closing brace on a line of its own.
+        block = re.search(r"map \$http_x_papaia_correlation_id \$gate_correlation_id \{\n(.*?)\n\s*\}\n",
+                          self.text, re.DOTALL)
+        self.assertIsNotNone(block)
+        body = block.group(1)
+        self.assertIn("default $request_id;", body)
+        self.assertIn('"~^[A-Za-z0-9-]{1,64}$" $http_x_papaia_correlation_id;', body)
+        # Values shaped like a prefixed key are replaced before the general rule.
+        self.assertLess(body.index("AKIA"), body.index("{1,64}"))
+
 
 def run_gate(*args: str, env: dict[str, str]) -> subprocess.CompletedProcess:
     full = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), **env}
@@ -264,13 +338,27 @@ class GateScript(unittest.TestCase):
         (self.callers / "proxy").mkdir(parents=True)
         (self.callers / "mcp").mkdir()
         self.run_dir = self.tmp / "run"
+        self.users = self.tmp / "users"
+        self.users.mkdir()
         self.env = {
             "GATE_CALLERS_DIR": str(self.callers),
             "GATE_RUN_DIR": str(self.run_dir),
             "GATE_TEMPLATE": str(GATE_TEMPLATE),
+            "GATE_USERS_FILE": str(self.users / "users.json"),
         }
         self.proxy_secret = token()
         self.write_proxy(self.proxy_secret + "\n")
+        self.write_users(["anna"])
+
+    def write_users(self, users: object, raw: str | None = None) -> None:
+        """Writes the list as the realm sync does: beside the old one, then renamed."""
+        text = raw if raw is not None else json.dumps(
+            {"format": "papaia.paperless-users/1", "users": users}, indent=2
+        ) + "\n"
+        part = self.users / ".users.json.new"
+        part.write_text(text, encoding="utf-8")
+        part.chmod(0o644)
+        part.replace(self.users / "users.json")
 
     def tearDown(self) -> None:
         shutil.rmtree(self.tmp)
@@ -410,6 +498,229 @@ class GateScript(unittest.TestCase):
         result = run_gate("render", env=self.env)
         self.assertEqual(result.returncode, 1)
         self.assertIn("own secret", result.stderr)
+
+    # --- the name list of the realm sync ------------------------------------------------
+
+    def listed(self) -> list[str]:
+        """Names in the rendered map, in the order written."""
+        text = self.rendered()
+        block = re.search(r"map \$gate_remote_user \$gate_listed \{(.*?)\}", text, re.DOTALL)
+        self.assertIsNotNone(block)
+        names = []
+        for line in block.group(1).strip().splitlines():
+            line = line.strip()
+            if line == 'default "";':
+                continue
+            found = re.fullmatch(r'"(\\?)([^"\\]+)" "([^"]+)";', line)
+            self.assertIsNotNone(found, line)
+            self.assertEqual(found.group(2), found.group(3), "a name maps to its own spelling")
+            # map reads a leading backslash as "not one of my parameters".
+            self.assertEqual(bool(found.group(1)),
+                             found.group(2) in ("default", "hostnames", "include", "volatile"), line)
+            names.append(found.group(2))
+        self.assertNotIn("# @users@", text)
+        return names
+
+    def test_render_maps_each_listed_name_to_itself(self) -> None:
+        names = ["anna", "ben.miller", "c+d@example.org", "e_f-g", "x" * 150]
+        self.write_users(names)
+        result = run_gate("render", env=self.env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(sorted(self.listed()), sorted(names))
+        self.assertIn("name list: 5 names", result.stderr)
+        for name in names:
+            self.assertNotIn(name, result.stdout + result.stderr)
+
+    def test_names_equal_to_map_parameters_stay_names(self) -> None:
+        names = ["default", "hostnames", "include", "volatile"]
+        self.write_users(names)
+        self.assertEqual(run_gate("render", env=self.env).returncode, 0)
+        self.assertIn('        "\\include" "include";\n', self.rendered())
+        self.assertEqual(sorted(self.listed()), names)
+
+    def test_an_empty_list_admits_no_name(self) -> None:
+        self.write_users([])
+        result = run_gate("render", env=self.env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.listed(), [])
+        self.assertIn("name list: 0 names", result.stderr)
+
+    def test_a_missing_list_admits_no_name_and_keeps_the_gate_up(self) -> None:
+        # The realm sync removes the list when no module serves mcp-paperless. The proxy
+        # path carries no identity and stays open.
+        (self.users / "users.json").unlink()
+        result = run_gate("render", env=self.env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.listed(), [])
+        self.assertIn("users.json is missing; no name is admitted", result.stderr)
+
+    def test_a_malformed_list_admits_no_name(self) -> None:
+        good = '{"format": "papaia.paperless-users/1", "users": ["anna"]}'
+        cases = {
+            "not json": "anna\nben\n",
+            "empty file": "",
+            "top level array": '["anna"]',
+            "wrong format": '{"format": "papaia.paperless-users/2", "users": ["anna"]}',
+            "format missing": '{"users": ["anna"]}',
+            "users missing": '{"format": "papaia.paperless-users/1"}',
+            "unknown field": '{"format": "papaia.paperless-users/1", "users": ["anna"], "extra": 1}',
+            "repeated field": '{"format": "papaia.paperless-users/1", "users": [], "users": ["anna"]}',
+            "users not a list": '{"format": "papaia.paperless-users/1", "users": "anna"}',
+            "number in list": '{"format": "papaia.paperless-users/1", "users": ["anna", 1]}',
+            "nested list": '{"format": "papaia.paperless-users/1", "users": [["anna"]]}',
+            "null in list": '{"format": "papaia.paperless-users/1", "users": ["anna", null]}',
+            "space in name": '{"format": "papaia.paperless-users/1", "users": ["an na"]}',
+            "quote in name": '{"format": "papaia.paperless-users/1", "users": ["an\\"na"]}',
+            "escape in name": '{"format": "papaia.paperless-users/1", "users": ["\\u0061nna"]}',
+            "semicolon in name": '{"format": "papaia.paperless-users/1", "users": ["anna;"]}',
+            "brace in name": '{"format": "papaia.paperless-users/1", "users": ["an{na"]}',
+            "dollar in name": '{"format": "papaia.paperless-users/1", "users": ["$anna"]}',
+            "colon in name": '{"format": "papaia.paperless-users/1", "users": ["an:na"]}',
+            "tilde in name": '{"format": "papaia.paperless-users/1", "users": ["~anna"]}',
+            "leading separator": '{"format": "papaia.paperless-users/1", "users": [".anna"]}',
+            "empty name": '{"format": "papaia.paperless-users/1", "users": [""]}',
+            "non-ascii name": '{"format": "papaia.paperless-users/1", "users": ["änna"]}',
+            "control character": '{"format": "papaia.paperless-users/1", "users": ["an\x01na"]}',
+            "name too long": '{"format": "papaia.paperless-users/1", "users": ["' + "a" * 256 + '"]}',
+            "duplicate name": '{"format": "papaia.paperless-users/1", "users": ["anna", "anna"]}',
+            "names differing in case": '{"format": "papaia.paperless-users/1", "users": ["anna", "Anna"]}',
+            "trailing comma": '{"format": "papaia.paperless-users/1", "users": ["anna",]}',
+            "trailing text": good + " x",
+            "two documents": good + good,
+            "unterminated": '{"format": "papaia.paperless-users/1", "users": ["anna"',
+        }
+        for why, raw in cases.items():
+            with self.subTest(why):
+                self.write_users(None, raw=raw)
+                result = run_gate("render", env=self.env)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(self.listed(), [], why)
+                self.assertIn("users.json is not a valid name list; no name is admitted", result.stderr)
+                self.assertNotIn("anna", result.stdout + result.stderr)
+
+    def test_the_valid_form_of_each_malformed_case_is_accepted(self) -> None:
+        # Guards the malformed cases above: they fail for their own reason only.
+        self.write_users(None, raw='{\n\t"users" : [ "anna" , "Ben" ] ,\r\n "format":"papaia.paperless-users/1"}')
+        result = run_gate("render", env=self.env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(sorted(self.listed()), ["Ben", "anna"])
+
+    def test_a_symlinked_list_admits_no_name(self) -> None:
+        target = self.tmp / "elsewhere.json"
+        target.write_text('{"format": "papaia.paperless-users/1", "users": ["anna"]}', encoding="utf-8")
+        (self.users / "users.json").unlink()
+        (self.users / "users.json").symlink_to(target)
+        result = run_gate("render", env=self.env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.listed(), [])
+        self.assertIn("users.json is a symbolic link", result.stderr)
+
+    def test_an_oversized_list_admits_no_name(self) -> None:
+        names = [f"user{i:07d}" for i in range(70000)]
+        self.write_users(names)
+        self.assertGreater((self.users / "users.json").stat().st_size, 1024 * 1024)
+        result = run_gate("render", env=self.env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.listed(), [])
+        self.assertIn("users.json is larger than", result.stderr)
+
+    def test_names_are_kept_out_of_the_callers_map(self) -> None:
+        self.write_users(["proxy", "mcp"])
+        self.assertEqual(run_gate("render", env=self.env).returncode, 0)
+        text = self.rendered()
+        callers = re.search(r"map \$http_x_papaia_gate \$gate_caller \{(.*?)\}", text, re.DOTALL)
+        self.assertNotIn('"proxy"', callers.group(1))
+        self.assertNotIn('"mcp"', callers.group(1))
+        self.assertEqual(sorted(self.listed()), ["mcp", "proxy"])
+
+
+FAKE_NGINX = """#!/bin/sh
+# Stands in for nginx: records reloads and the stop signal, runs like `daemon off`.
+log="$GATE_RUN_DIR/nginx.calls"
+case "$*" in
+    *"-s reload"*) echo reload >> "$log"; exit 0 ;;
+    *"-t"*) exit 0 ;;
+esac
+echo $$ > "$GATE_RUN_DIR/nginx.pid"
+echo start >> "$log"
+trap 'echo stop >> "$log"; exit 0' TERM
+while :; do sleep 1; done
+"""
+
+
+class GateWatchesTheList(unittest.TestCase):
+    """`gate.sh run` reloads the gate when the realm sync replaces the name list."""
+
+    def setUp(self) -> None:
+        self.script = GateScript("test_render_maps_each_callers_secret_to_its_name")
+        self.script.setUp()
+        self.addCleanup(self.script.tearDown)
+        bin_dir = self.script.tmp / "bin"
+        bin_dir.mkdir()
+        fake = bin_dir / "nginx"
+        fake.write_text(FAKE_NGINX, encoding="utf-8")
+        fake.chmod(0o755)
+        self.run_dir = self.script.run_dir
+        env = {
+            "PATH": f"{bin_dir}:{os.environ.get('PATH', '/usr/bin:/bin')}",
+            **self.script.env,
+            "GATE_WATCH_SECONDS": "1",
+        }
+        self.proc = subprocess.Popen(
+            ["sh", str(GATE_SCRIPT), "run"], env=env, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, text=True, start_new_session=True,
+        )
+        self.addCleanup(self.stop)
+        self.wait_for(lambda: "start" in self.calls(), "nginx started")
+
+    def stop(self) -> None:
+        try:
+            os.killpg(self.proc.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        self.proc.communicate(timeout=10)
+
+    def calls(self) -> list[str]:
+        path = self.run_dir / "nginx.calls"
+        return path.read_text(encoding="utf-8").split() if path.exists() else []
+
+    def wait_for(self, check, what: str, seconds: float = 10) -> None:
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            if check():
+                return
+            time.sleep(0.2)
+        self.fail(f"timed out waiting for: {what}")
+
+    def test_a_removed_name_is_refused_after_the_next_check(self) -> None:
+        self.assertEqual(self.script.listed(), ["anna"])
+        self.script.write_users(["ben"])
+        self.wait_for(lambda: self.calls().count("reload") == 1, "reload after a new list")
+        self.assertEqual(self.script.listed(), ["ben"])
+        self.script.write_users([])
+        self.wait_for(lambda: self.calls().count("reload") == 2, "reload after an empty list")
+        self.assertEqual(self.script.listed(), [])
+
+    def test_an_unchanged_list_causes_no_reload(self) -> None:
+        self.script.write_users(["anna"])
+        time.sleep(3)
+        self.assertEqual(self.calls(), ["start"])
+
+    def test_a_removed_list_closes_the_names(self) -> None:
+        (self.script.users / "users.json").unlink()
+        self.wait_for(lambda: "reload" in self.calls(), "reload after the list was removed")
+        self.assertEqual(self.script.listed(), [])
+
+    def test_a_render_failure_stops_the_gate(self) -> None:
+        # A secret broken on disk must not leave the old names admitted.
+        self.script.write_proxy("short\n")
+        self.script.write_users(["ben"])
+        self.wait_for(lambda: "stop" in self.calls(), "stop after a failed render")
+        self.assertNotIn("reload", self.calls())
+        # The container exits; its restart policy runs `gate.sh run` again, which
+        # stops at the broken secret (fail closed).
+        self.proc.wait(timeout=10)
+        self.assertIn("proxy/secret", self.proc.stderr.read())
 
 
 if __name__ == "__main__":

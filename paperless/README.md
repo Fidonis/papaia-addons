@@ -36,9 +36,9 @@ variable in `<papaia-config>/addons/paperless/.env` to run another one.
 |---|---|---|---|
 | [Paperless-ngx](https://github.com/paperless-ngx/paperless-ngx) | `3.0.5` | primary | `PAPERLESS_IMAGE` |
 | [paperless-mcp-rbac](https://github.com/Fidonis/paperless-mcp-rbac) | `0.1.1` | primary | `PAPERLESS_MCP_IMAGE` |
-| [Valkey](https://github.com/valkey-io/valkey) | `9-alpine` (floating) | sidecar | `PAPERLESS_REDIS_IMAGE` |
-| [PostgreSQL](https://www.postgresql.org) | `18` (floating) | sidecar | `PAPERLESS_DB_IMAGE` |
-| [Gotenberg](https://github.com/gotenberg/gotenberg) | `8.34` (floating) | sidecar | `PAPERLESS_GOTENBERG_IMAGE` |
+| [Valkey](https://github.com/valkey-io/valkey) | `9.2.0-alpine` | sidecar | `PAPERLESS_REDIS_IMAGE` |
+| [PostgreSQL](https://www.postgresql.org) | `18.7` | sidecar | `PAPERLESS_DB_IMAGE` |
+| [Gotenberg](https://github.com/gotenberg/gotenberg) | `8.34.0` | sidecar | `PAPERLESS_GOTENBERG_IMAGE` |
 | [Apache Tika](https://tika.apache.org) | `3.2.3.0` | sidecar | `PAPERLESS_TIKA_IMAGE` |
 <!-- components:end -->
 

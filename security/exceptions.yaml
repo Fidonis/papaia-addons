@@ -1,0 +1,37 @@
+# Accepted vulnerability findings of the images this repository builds.
+#
+# Read by tools/scan_gate.py, which every image scan runs (pull requests,
+# publish and the nightly scan). Without an entry here, a CRITICAL or HIGH
+# finding with a fixed version available fails the scan.
+#
+# One entry per finding:
+#
+#   - id: CVE-2026-00000             # as Trivy reports it (CVE-, GHSA-, ...)
+#     package: libexample            # PkgName in the report
+#     image: ghcr.io/fidonis/<image> # repository, without tag or digest
+#     severity: HIGH                 # HIGH or CRITICAL, as reported
+#     reason: >-                     # why it is accepted and what resolves it
+#       ...
+#     added: 2026-11-21              # unquoted dates
+#     expires: 2027-02-19            # at most 90 days after `added`
+#     approved_by: <role that countersigned>
+#
+# Unknown fields are refused. An expired entry fails every scan until it is
+# removed or renewed with a new review; an entry whose finding is gone is
+# reported as unused and should be removed.
+
+version: 1
+
+exceptions:
+  - id: CVE-2026-109413
+    package: symfony/yaml
+    image: ghcr.io/fidonis/papaia-mediawiki
+    severity: HIGH
+    reason: >-
+      symfony/yaml 5.4.52 ships in the vendor directory of MediaWiki core in the
+      upstream base image docker.io/library/mediawiki:1.43.11; the image does not
+      change upstream vendor code. The fix (5.4.54) arrives with a MediaWiki
+      1.43 patch release, which is taken in the next image version.
+    added: 2026-11-21
+    expires: 2027-02-19
+    approved_by: pending (security officer countersignature)

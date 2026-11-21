@@ -62,6 +62,14 @@ ENV_IMAGE = re.compile(r"^(?P<prefix>#\s*)?(?P<var>[A-Z][A-Z0-9_]*)=(?P<ref>\S+)
 # `3.0.5`, `v1.19.0`, `1.43.11-1.0.0`, `3.2.3.0`: a patch level is named.
 # `18`, `8.34`, `9-alpine`, `latest`: the deployed version depends on the pull date.
 EXACT_TAG = re.compile(r"^v?\d+\.\d+\.\d+(?:[.+-].*)?$")
+# Upstreams whose releases are named major.minor, with no patch level: for them a
+# tag such as PostgreSQL `18.7` names one release, and with a digest it counts as
+# fixed. Elsewhere a major.minor tag (Gotenberg `8.34`) follows the patch releases
+# and floats, whatever digest it was pinned at. Add a repository here only after
+# checking that its upstream never publishes a third number.
+MINOR_RELEASE_REPOSITORIES = frozenset({"docker.io/library/postgres"})
+RELEASE_TAG = re.compile(r"^v?\d+\.\d+(?:-[A-Za-z0-9.]+)?$")
+PINNED_DIGEST = re.compile(r"@sha256:[0-9a-f]{64}$")
 SEMVER = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 # `KEY=value` as written in `.env.example`, active or commented out.
 ENV_KEY = re.compile(r"^#?\s*(?P<var>[A-Z][A-Z0-9_]*)=")
@@ -83,6 +91,30 @@ def image_tag(ref: str) -> str:
 
 def is_exact(tag: str) -> bool:
     return EXACT_TAG.match(tag) is not None
+
+
+def image_repository(ref: str) -> str:
+    """Repository of an image reference, without tag or digest."""
+    name = ref.split("@", 1)[0]
+    head, _, last = name.rpartition("/")
+    last = last.split(":", 1)[0]
+    return f"{head}/{last}" if head else last
+
+
+def is_fixed(ref: str) -> bool:
+    """The reference always pulls the same release.
+
+    An exact tag, or, for an upstream without patch levels
+    (`MINOR_RELEASE_REPOSITORIES`), a major.minor tag with a digest.
+    """
+    tag = image_tag(ref)
+    if is_exact(tag):
+        return True
+    return (
+        image_repository(ref) in MINOR_RELEASE_REPOSITORIES
+        and PINNED_DIGEST.search(ref) is not None
+        and RELEASE_TAG.match(tag) is not None
+    )
 
 
 def read_compose_images(text: str) -> tuple[dict[str, str], list[str]]:
@@ -324,7 +356,7 @@ def check_addon(path: Path) -> list[str]:
             problems.append(
                 f"{label}: version is `{component['version']}`, {COMPOSE} pulls `{tag}`"
             )
-        exact = is_exact(tag)
+        exact = is_fixed(images[var])
         if not exact and component.get("pinned") is not False:
             problems.append(
                 f"{label}: tag `{tag}` floats, declare `pinned: false` or pin an exact tag"

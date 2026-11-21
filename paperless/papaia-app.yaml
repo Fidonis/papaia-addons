@@ -40,25 +40,22 @@ components:
     role: sidecar
     kind: upstream
     image_var: PAPERLESS_REDIS_IMAGE
-    version: "9-alpine"
+    version: "9.2.0-alpine"
     source: https://github.com/valkey-io/valkey
-    pinned: false
   - id: postgres
     name: PostgreSQL
     role: sidecar
     kind: upstream
     image_var: PAPERLESS_DB_IMAGE
-    version: "18"
+    version: "18.7"
     source: https://www.postgresql.org
-    pinned: false
   - id: gotenberg
     name: Gotenberg
     role: sidecar
     kind: upstream
     image_var: PAPERLESS_GOTENBERG_IMAGE
-    version: "8.34"
+    version: "8.34.0"
     source: https://github.com/gotenberg/gotenberg
-    pinned: false
   - id: tika
     name: Apache Tika
     role: sidecar

@@ -41,7 +41,7 @@ services:
   mediawiki:
     # <MediaWiki version>-<add-on version>: a new add-on version that changes
     # image/ publishes a new tag, so a cached image is never mistaken for it.
-    image: ${MEDIAWIKI_IMAGE:-ghcr.io/fidonis/papaia-mediawiki:1.43.11-1.0.0}
+    image: ${MEDIAWIKI_IMAGE:-ghcr.io/fidonis/papaia-mediawiki:1.43.11-1.0.0@sha256:c6831705ccbad3d784ca77c49a1993c8272d940065011130e4c6f2469a3f4a5a}
     # Used when the image cannot be pulled: compose builds it from the
     # add-on's own Dockerfile instead (needs internet, takes minutes).
     build:
@@ -130,7 +130,7 @@ services:
   #  which the image creates on first start.
   # ═══════════════════════════════════════════════════════════════════════════
   mediawiki-db:
-    image: ${MEDIAWIKI_DB_IMAGE:-docker.io/library/mariadb:11.8.9}
+    image: ${MEDIAWIKI_DB_IMAGE:-docker.io/library/mariadb:11.8.9@sha256:e1d5495f445654134f226f55a41ce0da227116f6f27f283101f405c794d841fc}
     restart: unless-stopped
     environment:
       MARIADB_DATABASE:             ${MW_DB_NAME:-mediawiki}
@@ -167,7 +167,7 @@ services:
   #  entrypoint to the shared credentials volume.
   # ═══════════════════════════════════════════════════════════════════════════
   mediawiki-mcp:
-    image: ${MEDIAWIKI_MCP_IMAGE:-ghcr.io/professionalwiki/mediawiki-mcp-server:0.20.0}
+    image: ${MEDIAWIKI_MCP_IMAGE:-ghcr.io/professionalwiki/mediawiki-mcp-server:0.20.0@sha256:8b145edac459b90f31fb7febc345f725762a6581d286bb648cfef8db235f916b}
     restart: unless-stopped
     entrypoint: ["/bin/sh", "/papaia/mcp-start.sh"]
     environment:

@@ -26,7 +26,7 @@ services:
   #  can reach Keycloak's external port for OIDC token validation and login.
   # ═══════════════════════════════════════════════════════════════════════════
   paperless:
-    image: ${PAPERLESS_IMAGE:-ghcr.io/paperless-ngx/paperless-ngx:3.0.5}
+    image: ${PAPERLESS_IMAGE:-ghcr.io/paperless-ngx/paperless-ngx:3.0.5@sha256:65a4cabf0169ea7fbd90ab7bb28ba3f8b5909613635acda1a03ad606f34b456b}
     restart: unless-stopped
     env_file:
       - ./.env
@@ -113,7 +113,7 @@ services:
   #  validation reaches Keycloak at OIDC_ISSUER via extra_hosts.
   # ═══════════════════════════════════════════════════════════════════════════
   paperless-mcp:
-    image: ${PAPERLESS_MCP_IMAGE:-ghcr.io/fidonis/paperless-mcp-rbac:0.1.1}
+    image: ${PAPERLESS_MCP_IMAGE:-ghcr.io/fidonis/paperless-mcp-rbac:0.1.1@sha256:8fca5007fc2516e14e5e0954d0890f3dd234f511227e68fc23906aade0df73cf}
     restart: unless-stopped
     environment:
       OIDC_ISSUER_URL:              ${OIDC_ISSUER}
@@ -160,7 +160,7 @@ services:
   #  redis:// scheme.
   # ═══════════════════════════════════════════════════════════════════════════
   paperless-broker:
-    image: ${PAPERLESS_REDIS_IMAGE:-docker.io/valkey/valkey:9-alpine}
+    image: ${PAPERLESS_REDIS_IMAGE:-docker.io/valkey/valkey:9.2.0-alpine@sha256:c8e2d17498838af5d91e12eb7c11220b3434a7b7131a333e3af52ad5e0b80882}
     restart: unless-stopped
     volumes:
       - paperless-valkeydata:/data
@@ -174,7 +174,7 @@ services:
   #  DATABASE — PostgreSQL
   # ═══════════════════════════════════════════════════════════════════════════
   paperless-db:
-    image: ${PAPERLESS_DB_IMAGE:-docker.io/library/postgres:18}
+    image: ${PAPERLESS_DB_IMAGE:-docker.io/library/postgres:18.7@sha256:eb63372c1e05c755f55fa30cbd07aecc443676fc6c0fa90b9002d01537841e1a}
     restart: unless-stopped
     environment:
       POSTGRES_DB:       ${PAPERLESS_DB:-paperless}
@@ -194,7 +194,7 @@ services:
   #  JavaScript disabled; only file:// URLs allowed to prevent SSRF.
   # ═══════════════════════════════════════════════════════════════════════════
   paperless-gotenberg:
-    image: ${PAPERLESS_GOTENBERG_IMAGE:-docker.io/gotenberg/gotenberg:8.34}
+    image: ${PAPERLESS_GOTENBERG_IMAGE:-docker.io/gotenberg/gotenberg:8.34.0@sha256:67097317623a503ba2a6a7e9ae8db6929a1f7e1bbd88077bacf2d325fbdab923}
     restart: unless-stopped
     command:
       - "gotenberg"
@@ -210,7 +210,7 @@ services:
   #  TIKA — Text extraction (Office documents, emails, and other formats)
   # ═══════════════════════════════════════════════════════════════════════════
   paperless-tika:
-    image: ${PAPERLESS_TIKA_IMAGE:-docker.io/apache/tika:3.2.3.0}
+    image: ${PAPERLESS_TIKA_IMAGE:-docker.io/apache/tika:3.2.3.0@sha256:c0154cb95587cde64be74f35ada1a2bd7892219f3f0ac3c9dc6cab34046b3573}
     restart: unless-stopped
     networks:
       - papaia-paperless-net

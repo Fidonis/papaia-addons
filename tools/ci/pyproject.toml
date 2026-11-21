@@ -1,0 +1,25 @@
+# Python tool set of the CI jobs: lint tools, PyYAML for tools/*.py and the
+# vendored papaia-kit (kit.lock) with its dependencies. Nothing here ships in
+# an add-on, so everything sits in the `ci` group, which the license check
+# treats as build scope. uv.lock pins every package by version and sha256;
+# CI runs `uv sync --locked --project tools/ci`.
+[project]
+name = "papaia-addons-ci"
+version = "0"
+requires-python = ">=3.12"
+dependencies = []
+
+[dependency-groups]
+ci = [
+    "papaia-kit==0.1.0",
+    "pyyaml==6.0.3",
+    "ruff==0.17.5",
+    "yamllint==1.38.0",
+]
+
+[tool.uv]
+package = false
+default-groups = ["ci"]
+
+[tool.uv.sources]
+papaia-kit = { path = "../../vendor/papaia-kit/0.1.0/papaia_kit-0.1.0-py3-none-any.whl" }

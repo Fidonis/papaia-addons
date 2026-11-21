@@ -1,0 +1,11 @@
+# Vendored papaia-kit release used by the CI jobs of this repository
+# (word check, commit check, license check, manifest conformance).
+# CI installs the wheel only after its sha256 matches the entry below;
+# tools/test_kit_lock.py checks the file, the wheel and the locked
+# tool set in tools/ci/uv.lock against each other.
+version = "0.1.0"
+commit = "0e00311d9089f5ca6ffb5ca65a9a3ba338d0b424"
+
+[[files]]
+path = "vendor/papaia-kit/0.1.0/papaia_kit-0.1.0-py3-none-any.whl"
+sha256 = "a066e41e25137b5d46adcd0cf17287dc89c470e3a5862df51489e1ea5ec3beab"

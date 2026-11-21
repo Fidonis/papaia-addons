@@ -1,0 +1,2 @@
+# CI runs Python 3.12 (tools/ci/pyproject.toml); tomllib and datetime.UTC are stdlib there.
+target-version = "py312"

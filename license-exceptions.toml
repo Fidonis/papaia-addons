@@ -1,0 +1,19 @@
+# License exceptions of this repository, read by `papaia-kit licenses check`
+# (CI job "License check"). Format: README of papaia-kit, "License policy";
+# the decision record is docs/development.md, section "Licenses".
+
+version = 1
+
+# The mediawiki add-on image is MediaWiki itself: the upstream image plus
+# extensions fetched at pinned commits and configuration. It runs as its own
+# container and is reached over HTTP only, so the policy's service scope
+# applies, where GPL passes only with its obligations met.
+[[exception]]
+package = "docker.io/library/mediawiki"
+version = "1.43.11"
+license = "GPL-2.0-or-later"
+scope = "service"
+reason = "Separately running wiki service, upstream code unmodified; the image build (mediawiki/image/Dockerfile) names the upstream image and every extension commit, so the corresponding source stays available from upstream."
+adr = "docs/development.md#licenses"
+expires = 2027-05-21
+approved_by = "pending (owner approval)"

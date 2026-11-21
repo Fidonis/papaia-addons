@@ -1,72 +1,374 @@
 name: CI
 
+# Every pull request and every push to main or a milestone branch runs the
+# full set: lint, unit tests, image pins, the papaia-kit checks (manifest
+# conformance, license policy, word check, commit metadata), a secret scan
+# over the whole history and the vulnerability scan. The nightly run repeats
+# it against the default branch, so a new CRITICAL finding with a fix in any
+# delivered image or in the CI tool set fails the scheduled run. The build,
+# SBOM and signature of the mediawiki image live in mediawiki-image.yml.
+#
+# Tools are pinned: actions by commit SHA, container images by digest,
+# downloads by sha256 and the Python tool set by tools/ci/uv.lock (which
+# includes the vendored papaia-kit wheel named in kit.lock).
+
 on:
   push:
-    branches: [main]
+    branches: [main, 'releases/**']
   pull_request:
+  merge_group:
+  schedule:
+    - cron: '17 3 * * *'
 
 permissions:
   contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  UV_VERSION: "0.11.28"
+  PYTHON_VERSION: "3.12"
+  UV_PROJECT: tools/ci
+  GITLEAKS_VERSION: "8.30.1"
+  # sha256 of gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz; change it together with the version.
+  GITLEAKS_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+  # Trivy as the core's image-scan runs it (trivy-action v0.36.0).
+  TRIVY_VERSION: v0.76.2
+  # hadolint/hadolint:v2.12.0
+  HADOLINT_IMAGE: "docker.io/hadolint/hadolint@sha256:30a8fd2e785ab6176eed53f74769e04f125afb2f74a6c52aef7d463583b6d45e"
 
 jobs:
   lint-yaml:
     name: Yamllint
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7.0.1
-      - name: Install yamllint
-        run: pip install --user yamllint
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
       - name: Run yamllint
-        run: yamllint .
+        run: uv run --locked yamllint .
 
   lint-shell:
     name: Shellcheck
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7.0.1
-      - name: Run shellcheck
-        uses: ludeeus/action-shellcheck@master
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
-          severity: warning
+          persist-credentials: false
+      # shellcheck ships with the runner image.
+      - name: Run shellcheck
+        run: git ls-files -z '*.sh' | xargs -0 --no-run-if-empty shellcheck --severity=warning
 
   lint-python:
     name: Ruff
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7.0.1
-      - name: Install ruff
-        run: pip install --user ruff
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
       - name: Run ruff
-        run: ruff check .
+        run: uv run --locked ruff check .
+
+  lint-dockerfile:
+    name: Hadolint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Run hadolint
+        run: |
+          set -euo pipefail
+          git ls-files -z '*Dockerfile' | while IFS= read -r -d '' file; do
+            echo "hadolint $file"
+            docker run --rm -i "$HADOLINT_IMAGE" < "$file"
+          done
 
   components:
     name: Component versions
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7.0.1
-      - name: Install PyYAML
-        run: pip install --user pyyaml
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
       - name: Check the declared component versions
-        run: python tools/components.py check
+        run: uv run --locked python tools/components.py check
+      - name: Every image pinned by tag and digest
+        run: uv run --locked python tools/image_refs.py check
       - name: Run the unit tests
-        run: python -m unittest discover -s tools
+        run: uv run --locked python -m unittest discover -s tools
 
   root-markdown:
     name: Root Markdown files
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
       - name: Allow only README.md and CHANGELOG.md at the repository root
-        run: python tools/root_markdown.py
+        run: python3 tools/root_markdown.py
+
+  conformance:
+    name: Manifest conformance
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+      # Every manifest that declares `exposes:` is checked with its own compose
+      # file; the others have no contract surface yet.
+      - name: papaia-kit conformance manifest
+        run: |
+          set -euo pipefail
+          checked=0
+          for manifest in */papaia-app.yaml; do
+            grep -q '^exposes:' "$manifest" || continue
+            addon="${manifest%/papaia-app.yaml}"
+            uv run --locked papaia-kit conformance manifest "$manifest" \
+              --compose "$addon/docker-compose.yml" --junit "conformance-$addon.xml"
+            checked=$((checked + 1))
+          done
+          echo "$checked manifest(s) with exposes: checked"
+          [[ "$checked" -gt 0 ]]
+
+  licenses:
+    name: License check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+      # The CI tool set from tools/ci/uv.lock (build scope) and the base images
+      # of the image this repository builds (license-records.json), against the
+      # policy of papaia-kit and license-exceptions.toml.
+      - name: Licenses against the policy
+        run: >-
+          uv run --locked papaia-kit licenses check
+          --python-project tools/ci
+          --records license-records.json
+          --exceptions license-exceptions.toml
+
+  discipline:
+    name: Word check and commit metadata
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Revision range of this run
+        id: range
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          MG_BASE: ${{ github.event.merge_group.base_sha }}
+          MG_HEAD: ${{ github.event.merge_group.head_sha }}
+          BEFORE: ${{ github.event.before }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # Ranges start at the merge base, so lines that only changed on the
+          # base branch after the branch point are neither checked nor counted.
+          case "$EVENT" in
+            pull_request) range="$(git merge-base "$PR_BASE" "$PR_HEAD")..$PR_HEAD" ;;
+            merge_group) range="$(git merge-base "$MG_BASE" "$MG_HEAD")..$MG_HEAD" ;;
+            *)
+              # A new branch has no "before", and after a force push the old
+              # head may be missing from the clone: check the last commit then.
+              if [[ -n "$BEFORE" && ! "$BEFORE" =~ ^0+$ ]] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+                range="$BEFORE..$SHA"
+              else
+                range="$SHA~1..$SHA"
+              fi
+              ;;
+          esac
+          echo "range=$range" >> "$GITHUB_OUTPUT"
+      - name: Denied terms in added lines
+        env:
+          RANGE: ${{ steps.range.outputs.range }}
+        run: uv run --locked python tools/word_check.py "$RANGE"
+      - name: Commit metadata
+        env:
+          RANGE: ${{ steps.range.outputs.range }}
+        run: uv run --locked papaia-kit repo commits "$RANGE"
+
+  vulnerability-targets:
+    name: Images to scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      images: ${{ steps.list.outputs.images }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+      # Every image default of the delivered add-ons, pinned by tag and digest
+      # (the list fails on an unpinned one, so nothing floating is scanned).
+      - name: Pinned image defaults
+        id: list
+        run: echo "images=$(uv run --locked python tools/image_refs.py list)" >> "$GITHUB_OUTPUT"
+
+  vulnerability:
+    name: Vulnerability scan (${{ matrix.platform }}, ${{ matrix.image }})
+    needs: vulnerability-targets
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ${{ fromJSON(needs.vulnerability-targets.outputs.images) }}
+        platform: [linux/amd64, linux/arm64]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Report file name
+        id: name
+        env:
+          IMAGE_REF: ${{ matrix.image }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          name="${IMAGE_REF%%@*}-${PLATFORM#linux/}"
+          echo "report=trivy-${name//[^A-Za-z0-9._-]/_}.json" >> "$GITHUB_OUTPUT"
+      # The pinned digest is the image index; TRIVY_PLATFORM picks the
+      # manifest of this platform from it.
+      - name: Scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        env:
+          TRIVY_PLATFORM: ${{ matrix.platform }}
+        with:
+          image-ref: ${{ matrix.image }}
+          version: ${{ env.TRIVY_VERSION }}
+          scanners: vuln
+          format: json
+          output: ${{ steps.name.outputs.report }}
+          exit-code: '0'
+          timeout: 20m
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        if: always()
+        with:
+          name: ${{ steps.name.outputs.report }}
+          path: ${{ steps.name.outputs.report }}
+          retention-days: 30
+      - name: Gate
+        env:
+          REPORT: ${{ steps.name.outputs.report }}
+        run: uv run --locked python tools/scan_gate.py "$REPORT"
+
+  vulnerability-tools:
+    name: Vulnerability scan (CI tool set)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+      # tools/ci/uv.lock: every package the CI jobs install, the kit included.
+      - name: Scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: tools/ci
+          version: ${{ env.TRIVY_VERSION }}
+          scanners: vuln
+          format: json
+          output: trivy-tools-ci.json
+          exit-code: '0'
+          timeout: 10m
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        if: always()
+        with:
+          name: trivy-tools-ci
+          path: trivy-tools-ci.json
+          retention-days: 30
+      - name: Gate
+        run: uv run --locked python tools/scan_gate.py trivy-tools-ci.json
+
+  secrets:
+    name: Secret scan (full history)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          # Full history: a secret removed in a later commit is still leaked.
+          fetch-depth: 0
+          persist-credentials: false
+      # The archive is verified against the sha256 pinned above, so a replaced
+      # release asset fails the job instead of running.
+      - name: Install gitleaks
+        run: |
+          set -euo pipefail
+          base="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
+          asset="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -fsSLO "${base}/${asset}"
+          echo "${GITLEAKS_SHA256}  ${asset}" | sha256sum -c -
+          tar -xzf "${asset}" gitleaks
+          mkdir -p "${RUNNER_TEMP}/bin"
+          install -m 0755 gitleaks "${RUNNER_TEMP}/bin/gitleaks"
+          rm -f gitleaks "${asset}"
+          echo "${RUNNER_TEMP}/bin" >> "${GITHUB_PATH}"
+      - name: Scan the repository history
+        run: gitleaks git --redact --verbose --exit-code 1 .
 
   pr-title:
     name: Conventional Commit PR title
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       pull-requests: read
     steps:
-      - uses: amannn/action-semantic-pull-request@v6
+      - uses: amannn/action-semantic-pull-request@2252a14e810aa9b85c2d560bd7070c802206ecf6  # v6.1.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:

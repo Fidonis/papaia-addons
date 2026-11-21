@@ -1,0 +1,15 @@
+# gitleaks configuration of the CI secret scan (ci.yml, job "Secret scan").
+# The default rules apply; the allow list below is the only addition.
+
+[extend]
+useDefault = true
+
+# The mediawiki image build pins each extension to a git commit
+# (`ARG <NAME>_REF=<40 hex digits>`). Those are public object ids, not
+# credentials, but their entropy trips the generic key rule.
+[[allowlists]]
+description = "Extension commits pinned in the mediawiki image build"
+condition = "AND"
+paths = ['''^mediawiki/image/Dockerfile$''']
+regexTarget = "match"
+regexes = ['''^[A-Z][A-Z0-9_]*_REF=[0-9a-f]{40}$''']

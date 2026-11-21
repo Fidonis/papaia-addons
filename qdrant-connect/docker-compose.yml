@@ -31,7 +31,7 @@ services:
   #  same host.
   # ═══════════════════════════════════════════════════════════════════════════
   qdrant-mcp:
-    image: ${QDRANT_MCP_IMAGE:-ghcr.io/fidonis/qdrant-mcp-rbac:0.3.0}
+    image: ${QDRANT_MCP_IMAGE:-ghcr.io/fidonis/qdrant-mcp-rbac:0.3.0@sha256:91268b178096087187bd325c777dbc8c840f021b4fa514646dc6f7fc43c231cf}
     restart: unless-stopped
     environment:
       OIDC_ISSUER_URL:           ${OIDC_ISSUER}

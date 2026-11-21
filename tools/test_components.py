@@ -114,6 +114,22 @@ class TagTests(unittest.TestCase):
         for tag in ("18", "8.34", "9-alpine", "1.31-alpine", "latest"):
             self.assertFalse(components.is_exact(tag), tag)
 
+    def test_digest_fixes_a_major_minor_tag_only_without_upstream_patch_level(self) -> None:
+        digest = "@sha256:" + "a" * 64
+        # PostgreSQL releases are named major.minor; with a digest `18.7` is exact.
+        self.assertTrue(components.is_fixed("docker.io/library/postgres:18.7" + digest))
+        self.assertFalse(components.is_fixed("docker.io/library/postgres:18.7"))
+        # Gotenberg and nginx name a patch level, so their major.minor tag floats.
+        for ref in (
+            "docker.io/gotenberg/gotenberg:8.34",
+            "docker.io/library/nginx:1.31-alpine",
+            "docker.io/library/postgres:18",
+            "docker.io/valkey/valkey:9-alpine",
+            "postgres:18.7",
+        ):
+            self.assertFalse(components.is_fixed(ref + digest), ref)
+        self.assertTrue(components.is_fixed("docker.io/apache/tika:3.2.3.0"))
+
 
 class CheckTests(unittest.TestCase):
     def setUp(self) -> None:

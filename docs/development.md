@@ -44,7 +44,16 @@ papaia-addons/
 │   ├── components.py          # Keeps component versions, .env.example and README tables equal to Compose; checks manifests and changelogs
 │   ├── exposes.py             # Holds the `exposes:` section to the add-on directory; compares generation comments with the core
 │   ├── root_markdown.py       # Allows only README.md and CHANGELOG.md as Markdown files at the repository root
+│   ├── image_refs.py          # Every image default pinned by tag and digest
+│   ├── scan_gate.py           # Decides a Trivy report against security/exceptions.yaml
+│   ├── word_check.py          # Denied terms in the lines a revision range adds (papaia-kit term list)
+│   ├── ci/                    # pyproject.toml + uv.lock: the pinned Python tool set of CI, including papaia-kit
+│   ├── fixtures/              # Test inputs, e.g. the seeded critical scan report
 │   └── test_*.py              # Unit tests for the tools
+├── security/exceptions.yaml   # Accepted vulnerability findings, each with reason and expiry (≤ 90 days)
+├── vendor/papaia-kit/         # The papaia-kit wheel CI uses, with LICENSE and NOTICE; kit.lock pins its sha256
+├── license-records.json       # License records of the base images the mediawiki image is built from
+├── license-exceptions.toml    # License exceptions (papaia-kit format), see "Licenses" below
 ├── CHANGELOG.md
 └── README.md
 ```
@@ -147,7 +156,39 @@ shellcheck --severity=warning <script>
 - **Manifests and changelogs**: `python tools/components.py check` also validates each manifest against its add-on directory and each `CHANGELOG.md` (see the contracts above)
 - **Component versions**: `python tools/components.py check` must pass; after changing an image tag in a Compose file, run `python tools/components.py fix` instead of editing the manifest, `.env.example` and README by hand. The unit tests run with `python -m unittest discover -s tools`
 - **Repository root**: the only Markdown files at the root are `README.md` and `CHANGELOG.md`; `python tools/root_markdown.py` fails for any other, and CI runs it. Further documentation goes under `docs/` or into the add-on directory it belongs to
-- Once a Python `src/` is introduced, `ruff check .` and the license-check workflow (see below) start applying
+- **Image pins**: `python tools/image_refs.py check` (see the pin policy below)
+- The CI tool set is pinned in `tools/ci/uv.lock`; run any of the above through it with `UV_PROJECT=tools/ci uv run --locked <command>` to use the exact CI versions (ruff, yamllint, PyYAML, papaia-kit)
+- Once a Python `src/` is introduced, the license-check workflow for `src/` starts applying as well
+
+---
+
+## Continuous integration
+
+`ci.yml` runs on every pull request, every push to `main` or `releases/**`, every merge queue run and nightly against the default branch; `mediawiki-image.yml` runs when the image, its scan inputs or the workflow change.
+
+| Job | What it checks |
+|---|---|
+| Yamllint, Shellcheck, Ruff, Hadolint | Lint; hadolint runs as a container pinned by digest over every tracked `Dockerfile` |
+| Component versions | `components.py check`, `image_refs.py check`, the unit tests of `tools/` |
+| Manifest conformance | `papaia-kit conformance manifest` for every manifest with `exposes:`, with its compose file |
+| License check | `papaia-kit licenses check` over the CI tool set (`tools/ci/uv.lock`, build scope) and the base images in `license-records.json` |
+| Word check and commit metadata | Denied terms of papaia-kit in the lines the change adds (`word_check.py`), counted from the merge base; author, committer, sign-off and wording of its commits (`papaia-kit repo commits`) |
+| Vulnerability scan | Trivy over every pinned image default of the delivered add-ons (`image_refs.py list`), each for `linux/amd64` and `linux/arm64`, and over the CI tool set (`tools/ci/uv.lock`), each through `scan_gate.py`; nightly too, so a new CRITICAL finding with a fix fails the scheduled run |
+| Secret scan (full history) | gitleaks, pinned by version and sha256, over every commit; `.gitleaks.toml` allows only the pinned extension commits of the mediawiki image build |
+| Conventional Commit PR title | The PR title |
+| mediawiki image: tag and pin | The compose default is a published tag with the digest the registry serves; a newer derived tag may be unpinned only while it is not published |
+| mediawiki image: build and scan | Build per platform (`linux/amd64`, `linux/arm64`), each scanned with Trivy through `scan_gate.py`; access-tier checks against the amd64 build; a seeded critical report must fail the gate |
+| mediawiki image: publish | Push by digest without a tag; scan and gate of each platform manifest; one CycloneDX SBOM per platform attached as a signed attestation; cosign signature of the index and its manifests with the release key into `ghcr.io/fidonis/papaia-signatures`; verification; only then the tag. A published tag is verified instead and fails the job if it lacks signature or SBOM. Images carry the label `de.fidonis.platform-kit=<kit.lock version>` |
+
+Scan threshold (`scan_gate.py`): a CRITICAL or HIGH finding with a fixed version fails unless `security/exceptions.yaml` lists it (id, package, image, severity, reason, added, expiry at most 90 days later, approval); findings without a fix are listed and do not fail. An entry whose `approved_by` starts with `pending` waives nothing until it is countersigned. An expired entry fails every scan.
+
+Signing needs the secrets `COSIGN_PRIVATE_KEY` and `COSIGN_PASSWORD` and the variable `COSIGN_PUBLIC_KEY` (the release key the core verifies against), and write access of this repository to the package `papaia-signatures`. Without the secrets and the variable the publish job stops before anything is pushed. Missing write access cannot be tested without writing, so it fails the signing step; the build then exists only as an untagged digest, and no tag is created.
+
+The static conformance suite of papaia-kit reads Python and JavaScript/TypeScript server code; this repository ships none (servers come as images from their own repositories), so it has no input here.
+
+### Licenses
+
+The policy is the one of papaia-kit. This repository builds one image, `papaia-mediawiki`, which is MediaWiki itself: the upstream image `docker.io/library/mediawiki` (GPL-2.0-or-later) with extensions fetched at pinned commits and configuration. It runs as its own container and is reached over HTTP only, so the policy's service scope applies, where GPL needs an exception whose obligations are met: upstream code stays unmodified and `mediawiki/image/Dockerfile` names the upstream image and every extension commit, so the corresponding source stays available. `license-exceptions.toml` records this decision; `license-records.json` lists the base images (Composer runs in the build stage only). Exceptions expire and are renewed with a new review.
 
 ---
 
@@ -165,7 +206,7 @@ shellcheck --severity=warning <script>
 
   An add-on whose image tag embeds the add-on version (`mediawiki`) takes the new tag from the same bump. The bump comes with the add-on's `CHANGELOG.md` section for the new version.
 - At release-cut time, `python tools/components.py release-check --from <last tag>` fails for an add-on that changed without a version bump, whose version moved without a change, or whose version moved without a `CHANGELOG.md` section for it; `python tools/components.py report --from <last tag>` prints the add-on and component matrix for `CHANGELOG.md` and the release notes.
-- Pin policy: primary and Fidonis components use an exact tag (`3.0.5`, not `3` or `latest`). A sidecar may use a floating tag (`postgres:18`) only when its component entry says `pinned: false`, so the table shows that the deployed version depends on the pull date.
+- Pin policy: every image default names its release by tag **and** digest, `name:tag@sha256:<digest>` (`docker.io/library/postgres:18.7@sha256:…`). The tag names the patch level (`3.0.5`, `8.34.0`); major.minor (`18.7`) only for an upstream that has no patch levels, listed in `MINOR_RELEASE_REPOSITORIES` of `tools/components.py` (PostgreSQL). It never names a moving name (`latest`, `dev`, `main`, `nightly`, `18`, `9-alpine`); the digest is what Docker pulls, so a re-pushed tag changes nothing. `python tools/image_refs.py check` enforces it for every delivered add-on (`n8n` is outside the delivered set and not checked). To move an image, take the digest the registry serves for the new tag (`docker buildx imagetools inspect --raw <name>:<tag> | sha256sum`), write `tag@sha256:<digest>` into the Compose default and run `python tools/components.py fix`. `pinned: false` remains only for a tag without digest that floats, which the pin check rejects for delivered add-ons.
 - `CHANGELOG.md` follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); it is updated by hand in a dedicated `docs:` PR at release-cut time, not by every feature/fix PR.
 - [release-drafter](https://github.com/release-drafter/release-drafter) auto-drafts GitHub Release notes from merged PR titles on every push to `main`; publishing that draft is what creates the release tag.
 
@@ -176,4 +217,5 @@ shellcheck --severity=warning <script>
 - **Never commit `.env` files.** Every add-on ships only `.env.example`, with placeholder values (`.gitignore` enforces this).
 - **Never commit generated secrets** — Keycloak realm exports, client secrets, or any other credential produced by an actual install.
 - Variables marked `secret: true` in a manifest are either auto-generated on install or, for `env_replace_secrets` entries, filled in by hand from the Keycloak Admin UI after the client import — never hard-coded.
-- **No copyleft dependencies** (GPL/LGPL/AGPL/EUPL/SSPL and similar) — enforced by the license-check workflow once a Python `src/` project exists.
+- **No copyleft dependencies** (GPL/LGPL/AGPL/EUPL/SSPL and similar) in own code — enforced by the license-check workflow once a Python `src/` project exists. Separately running third-party services follow the service scope of the papaia-kit policy (see "Licenses").
+- **Vulnerabilities**: images are scanned on every change and nightly; accepted findings live in `security/exceptions.yaml` with an expiry (see "Continuous integration").

@@ -114,6 +114,12 @@ jobs:
         run: uv run --locked python tools/components.py check
       - name: Every image pinned by tag and digest
         run: uv run --locked python tools/image_refs.py check
+      # A milestone may pin a signed release candidate from a local test
+      # registry; main is what a release is cut from, so main and every pull
+      # request into it must name published images only.
+      - name: No test registry or release candidate image on the release line
+        if: github.ref == 'refs/heads/main' || github.base_ref == 'main'
+        run: uv run --locked python tools/image_refs.py release
       - name: Run the unit tests
         run: uv run --locked python -m unittest discover -s tools
 
@@ -244,6 +250,8 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
       # Every image default of the delivered add-ons, pinned by tag and digest
       # (the list fails on an unpinned one, so nothing floating is scanned).
+      # A release candidate from a local test registry cannot be pulled here;
+      # the list names it and leaves it out, and the release line refuses it.
       - name: Pinned image defaults
         id: list
         run: echo "images=$(uv run --locked python tools/image_refs.py list)" >> "$GITHUB_OUTPUT"

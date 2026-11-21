@@ -33,8 +33,15 @@ components:
     role: primary
     kind: fidonis
     image_var: PAPERLESS_MCP_IMAGE
-    version: "0.1.1"
+    version: "0.2.0-rc.1"
     source: https://github.com/Fidonis/paperless-mcp-rbac
+  - id: nginx
+    name: nginx
+    role: sidecar
+    kind: upstream
+    image_var: PAPERLESS_GATE_IMAGE
+    version: "1.31.2-alpine"
+    source: https://nginx.org
   - id: valkey
     name: Valkey
     role: sidecar
@@ -69,6 +76,9 @@ networks:
   # compose network name. Scopes the Seam-1 bridge per deployment; a default
   # single-stack host resolves it to papaia-paperless-net.
   app_network: "${PAPAIA_PROJECT:-papaia}-paperless-net"
+  # Only nginx-proxy-manager joins app_network. papaia-ctl attaches every other
+  # service listed here (librechat) to ${PAPAIA_PROJECT:-papaia}-paperless-front,
+  # whose only add-on member is paperless-mcp.
   attach: [nginx-proxy-manager, librechat]
 
 # Env vars pointing at the bundled-Keycloak CA cert (mounted from
@@ -104,9 +114,9 @@ env_prompts:
   # ── Paperless-ngx — Public URL ────────────────────────────────────────────
   PAPERLESS_PUBLIC_URL:
     label: "Paperless public URL"
-    hint: "Browser-facing URL of the Paperless web UI (scheme + host + optional port)"
-    default: "http://host.docker.internal:8010"
+    hint: "Address of the Paperless proxy host (scheme + host name, no port), e.g. https://docs.example.com; Paperless publishes no port of its own"
     type: url
+    pattern: "^https?://[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?/?$"
 
   # ── Paperless-ngx — Database ──────────────────────────────────────────────
   PAPERLESS_DB:
@@ -198,14 +208,6 @@ env_prompts:
     min: 0
     max: 1
 
-  # ── Paperless-ngx — External port ─────────────────────────────────────────
-  PAPERLESS_EXT_PORT:
-    label: "Paperless host port"
-    hint: "Must match the port in PAPERLESS_PUBLIC_URL"
-    type: integer
-    min: 1
-    max: 65535
-
   # ── MCP server ────────────────────────────────────────────────────────────
   PAPERLESS_MCP_OIDC_AUDIENCE:
     label: "MCP server token audience"
@@ -218,7 +220,8 @@ env_prompts:
     min: 0
 
   PAPERLESS_MCP_PAPERLESS_URL:
-    label: "Paperless internal URL (same Docker network)"
+    label: "Paperless internal URL (the gate, same Docker network)"
+    hint: "paperless-gate in front of Paperless; Paperless itself listens on its container's loopback only"
     type: url
 
   PAPERLESS_MCP_REMOTE_USER_HEADER:
@@ -621,6 +624,11 @@ exposes:
         reason:
           de: "Aufgabenwarteschlange des Brokers; wird beim Start neu aufgebaut, offene Aufgaben werden neu eingereiht."
           en: "Task queue of the broker; rebuilt on start, pending tasks are queued again."
+      - name: paperless-gate-mcp
+        backup: exclude
+        reason:
+          de: "Geheimnis des MCP-Servers für den Torwächter; fehlt es, erzeugt der Torwächter beim Start ein neues."
+          en: "The MCP server's secret for the gate; when it is missing, the gate generates a new one on start."
     export:
       exit: {format: paperless-ngx.document-exporter/1, schema: schemas/paperless-export-1.json}
     storage:
@@ -678,3 +686,4 @@ exposes:
             responsible: {de: "Archivverwaltung", en: "Archive administration"}
       secrets:
         - {kind: database, location: paperless-pgdata}
+        - {kind: file, location: paperless-gate-mcp}

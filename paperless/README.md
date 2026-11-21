@@ -13,18 +13,24 @@ AI-assisted document access via LibreChat, and a Keycloak SSO login for Paperles
 
 | Service | Port | Description |
 |---|---|---|
-| `paperless` | `8010` (configurable) | Paperless-ngx web UI and API |
+| `paperless` | none (loopback of its container) | Paperless-ngx web UI and API |
+| `paperless-gate` | `8001`, internal (`paperless:8001`) | The only way to Paperless; passes a request only with a caller's secret |
 | `paperless-mcp` | internal | OIDC/RBAC-secured MCP server for LibreChat |
 | `paperless-broker` | internal | Valkey task broker |
 | `paperless-db` | internal | PostgreSQL database |
 | `paperless-gotenberg` | internal | Office/email → PDF conversion |
 | `paperless-tika` | internal | Text extraction |
 
+No container of the add-on publishes a port, on any address. Paperless is reached
+through the proxy in the browser and through `paperless-mcp` from LibreChat; see
+[Paperless behind its gate](#paperless-behind-its-gate).
+
 All services run on the add-on's own isolated Docker bridge network,
 `${PAPAIA_PROJECT:-papaia}-paperless-net` — `papaia-paperless-net` on a default
 single-stack host, or `papaia-<env>-paperless-net` when several papAIa deployments
 share a host. `papaia-ctl` resolves the same value when it generates the Seam-1
-override.
+override. `paperless-mcp` also joins `${PAPAIA_PROJECT:-papaia}-paperless-front`,
+the only network LibreChat shares with the add-on.
 
 ## Components
 
@@ -35,7 +41,8 @@ variable in `<papaia-config>/addons/paperless/.env` to run another one.
 | Component | Version | Role | Image variable |
 |---|---|---|---|
 | [Paperless-ngx](https://github.com/paperless-ngx/paperless-ngx) | `3.0.5` | primary | `PAPERLESS_IMAGE` |
-| [paperless-mcp-rbac](https://github.com/Fidonis/paperless-mcp-rbac) | `0.1.1` | primary | `PAPERLESS_MCP_IMAGE` |
+| [paperless-mcp-rbac](https://github.com/Fidonis/paperless-mcp-rbac) | `0.2.0-rc.1` | primary | `PAPERLESS_MCP_IMAGE` |
+| [nginx](https://nginx.org) | `1.31.2-alpine` | sidecar | `PAPERLESS_GATE_IMAGE` |
 | [Valkey](https://github.com/valkey-io/valkey) | `9.2.0-alpine` | sidecar | `PAPERLESS_REDIS_IMAGE` |
 | [PostgreSQL](https://www.postgresql.org) | `18.7` | sidecar | `PAPERLESS_DB_IMAGE` |
 | [Gotenberg](https://github.com/gotenberg/gotenberg) | `8.34.0` | sidecar | `PAPERLESS_GOTENBERG_IMAGE` |
@@ -80,7 +87,7 @@ Edit `.env` and fill in all `CHANGE_ME` values:
 | Variable | Description |
 |---|---|
 | `OIDC_ISSUER` | Keycloak issuer URL (same value as `AUTH_HOST` in your papaia setup) |
-| `PAPERLESS_PUBLIC_URL` | Browser-facing URL of Paperless (e.g. `https://docs.example.com`) |
+| `PAPERLESS_PUBLIC_URL` | Browser-facing URL of Paperless: its proxy host, a host name without a port (e.g. `https://docs.example.com`) |
 | `PAPERLESS_DBPASS` | PostgreSQL password (generate randomly) |
 | `PAPERLESS_SECRET_KEY` | Django secret key (generate ≥ 64 chars randomly) |
 | `PAPERLESS_ADMIN_PASSWORD` | Bootstrap admin password (generate randomly) |
@@ -123,21 +130,46 @@ Add a protocol mapper of type *Audience* to the existing `librechat` client:
 ### 3. Wire the network (Seam 1)
 
 `papaia-ctl` writes this override for you (`papaia-ctl addon install paperless`),
-resolving the network name from `PAPAIA_PROJECT` in the core `.env`. To wire it by
-hand, attach `nginx` and `librechat` to the same network the add-on creates:
+resolving the network names from `PAPAIA_PROJECT` in the core `.env`. To wire it by
+hand, attach the proxy to the add-on network and LibreChat to the front network only:
 
 ```yaml
 # papaia-config/overrides/docker-compose.paperless.override.yml
 services:
   librechat:
     networks:
-      - ${PAPAIA_PROJECT:-papaia}-paperless-net
+      - ${PAPAIA_PROJECT:-papaia}-paperless-front
   nginx-proxy-manager:
     networks:
       - ${PAPAIA_PROJECT:-papaia}-paperless-net
+    volumes:
+      # The proxy's gate secret, see "Paperless behind its gate".
+      - ${PAPAIA_CONFIG_DIR}/secrets/paperless-gate/proxy:/run/papaia/paperless-gate:ro
 networks:
   ${PAPAIA_PROJECT:-papaia}-paperless-net:
     external: true
+  ${PAPAIA_PROJECT:-papaia}-paperless-front:
+    external: true
+```
+
+Never attach LibreChat or any other service to `papaia-paperless-net`: every member
+of that network can reach the gate, and only Paperless, its data services, the MCP
+server and the proxy belong there.
+
+The gate needs the proxy's secret before it starts:
+`$PAPAIA_CONFIG_DIR/secrets/paperless-gate/proxy/secret` (one line, 32 to 512
+characters of `A-Z a-z 0-9 . _ ~ + / = -`, directory `0700`, file `0600`) and, beside
+it, `nginx.conf` with `more_set_input_headers "X-Papaia-Gate: <the same value>";`.
+`papaia-ctl setup` writes both. By hand:
+
+```bash
+dir="$PAPAIA_CONFIG_DIR/secrets/paperless-gate/proxy"
+mkdir -p "$dir" && chmod 0700 "$dir"
+umask 077
+secret="$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n')"
+printf '%s\n' "$secret" > "$dir/secret"
+printf 'more_set_input_headers "X-Papaia-Gate: %s";\n' "$secret" > "$dir/nginx.conf"
+unset secret
 ```
 
 Start the addon network first (creates the Docker network):
@@ -180,11 +212,15 @@ mcpSettings:
     # ... keep any existing entries
 ```
 
-### 5. Configure reverse proxy (Seam 5, optional)
+### 5. Configure the reverse proxy (Seam 5)
 
-See `integration/infra/nginx/paperless.conf` for an Nginx configuration reference.
-In the Nginx Proxy Manager web UI, add a new proxy host pointing to `paperless:8000`
-on the add-on network (`papaia-paperless-net`, or `papaia-<env>-paperless-net`).
+The proxy is the only browser path to Paperless. `papaia-ctl` creates the proxy
+host while the add-on is active. By hand, see `integration/infra/nginx/paperless.conf`:
+a proxy host for the host name of `PAPERLESS_PUBLIC_URL`, forwarding to
+`paperless:8001` (the gate) on the add-on network, that clears
+`X-Papaia-Remote-User` and `X-Papaia-Gate` and includes
+`/run/papaia/paperless-gate/nginx.conf`. Without that include every request ends
+with `403`.
 
 Behind a reverse proxy, Paperless needs to know which hop carries the real
 client IP — it uses that for login rate limiting, and gets it wrong by
@@ -194,6 +230,53 @@ default, which surfaces as `403 Forbidden` on the login POST. Uncomment
 `X-Forwarded-For`, which is not necessarily the number of listed IPs. Leave
 both commented out when unused: an empty value is not the same as an unset
 one and aborts startup.
+
+---
+
+## Paperless behind its gate
+
+Paperless takes the person of a request from the header `X-Papaia-Remote-User`.
+Whoever can send that header to Paperless acts as anyone, and Paperless creates
+an account for a name it does not know. The add-on therefore lets no one but its
+two callers reach Paperless:
+
+| Layer | What it does |
+|---|---|
+| Loopback | `PAPERLESS_BIND_ADDR=127.0.0.1`: Paperless listens only inside its container. A container in the host network, a foreign Compose network or a stranger on the add-on network gets no connection on port 8000. |
+| No published port | No container of the add-on publishes a port, also not on `127.0.0.1`. |
+| `paperless-gate` | Stock nginx in Paperless' network namespace (`network_mode: service:paperless`), port 8001. A request passes only when `X-Papaia-Gate` carries the secret of a caller; any other request is answered with `403` before Paperless. The gate removes `X-Papaia-Gate` and header names with underscores, and forwards `X-Papaia-Remote-User` only for the MCP server (a name of letters, digits and `._@+-`, at most 150 characters, else `400`). |
+| Callers | `proxy`: the secret papaia-ctl writes (mounted read-only from `$PAPAIA_CONFIG_DIR/secrets/paperless-gate/proxy`). `mcp`: generated by the gate on its first start into the volume `paperless-gate-mcp`, mounted read-only into `paperless-mcp`. Each caller has its own secret; the gate refuses to start with a missing, malformed or shared one. |
+| Browser path | The proxy clears both headers on every request and sets only its secret, so a browser request never carries an identity: the person signs in to Paperless with Keycloak. |
+| Networks | `papaia-paperless-net`: Paperless, its data services, the MCP server and the proxy. LibreChat is only on `papaia-paperless-front` with the MCP server. |
+| Log | One JSON line per request with the caller (`proxy`, `mcp` or empty) and the status; no path, query, header value or secret. |
+
+The gate does not yet check the name the MCP server sends against the accounts
+of the realm. Until it does, an account in Paperless is created for any name a
+valid token of the `mcp-paperless` audience carries.
+
+**Rotation.**
+
+- MCP server: `docker compose exec paperless-gate sh /gate/gate.sh rotate mcp`. The
+  gate writes a new secret and reloads; the MCP server reads the file again on its
+  next call. The gate prints one `papaia.audit/1` line for the change (never the
+  value), as it does when it creates the secret.
+- Proxy: `papaia-ctl secrets rotate paperless-gate/proxy`, then
+  `docker compose exec paperless-gate sh /gate/gate.sh reload` (or restart the add-on).
+  Until the gate has reloaded, browser requests end with `403`.
+
+**Requirements.** papaia 1.10.0 or newer (it writes the proxy's secret and creates
+the proxy host) and paperless-mcp-rbac 0.2.0 or newer (it sends its gate secret;
+0.1.1 sends none, and the gate refuses every call).
+
+**Before the 0.2.0 release of paperless-mcp-rbac.** Until it is published, the
+default of `PAPERLESS_MCP_IMAGE` is its signed release candidate `0.2.0-rc.1` from a
+local test registry (`127.0.0.1:57500/unpublished/`), pinned by digest. Hosts
+without that registry set `PAPERLESS_MCP_IMAGE` to an image they can pull.
+`python3 tools/image_refs.py release` refuses any test registry image and any
+release candidate tag; CI runs it for `main` and for every pull request into it,
+so the published `ghcr.io/fidonis/paperless-mcp-rbac:0.2.0@sha256:<digest>`
+replaces the candidate (in `docker-compose.yml`, `.env.example`, the manifest and
+the table above) before this add-on is released.
 
 ---
 
@@ -285,14 +368,18 @@ describes its `manifest.json`.
 
 - **Network isolation:** All Paperless services run on the add-on's own bridge
   (`papaia-paperless-net`, or `papaia-<env>-paperless-net` — one per deployment on a
-  shared host), isolated from the papaia core network. Only `nginx` and `librechat` are
-  attached to it via the generated compose override.
+  shared host), isolated from the papaia core network. Only the proxy is attached to
+  it; LibreChat reaches the MCP server over `papaia-paperless-front`.
+- **No way around the gate:** Paperless listens on its container's loopback and
+  publishes no port; `paperless-gate` passes a request only with the proxy's or the
+  MCP server's own secret (see [Paperless behind its gate](#paperless-behind-its-gate)).
 - **OIDC at the data boundary:** `paperless-mcp` validates every incoming Bearer token
   against Keycloak before forwarding requests to Paperless. Paperless enforces its own
   per-user RBAC. No admin credentials are stored in the MCP layer.
 - **Remote-user auth:** `PAPERLESS_ENABLE_HTTP_REMOTE_USER` allows the MCP server to
-  act on behalf of the authenticated user. The `X-Papaia-Remote-User` header is stripped
-  by nginx at the ingress boundary (see `integration/infra/nginx/paperless.conf`).
+  act on behalf of the authenticated user. The `X-Papaia-Remote-User` header is cleared
+  by the proxy on every request (see `integration/infra/nginx/paperless.conf`) and
+  again by the gate for every caller but the MCP server.
 
 ---
 

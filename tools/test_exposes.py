@@ -418,7 +418,12 @@ class PaperlessTests(unittest.TestCase):
         backup = {v["name"]: v["backup"] for v in self.entry()["volumes"]}
         self.assertEqual(
             backup,
-            {"paperless-data": "include", "paperless-pgdata": "include", "paperless-valkeydata": "exclude"},
+            {
+                "paperless-data": "include",
+                "paperless-pgdata": "include",
+                "paperless-valkeydata": "exclude",
+                "paperless-gate-mcp": "exclude",
+            },
         )
 
     def test_storage_declares_personal_data_and_an_exit_export(self) -> None:

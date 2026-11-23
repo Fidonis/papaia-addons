@@ -14,7 +14,7 @@ Current catalog:
 |---|---|
 | `mediawiki` | A MediaWiki knowledge base with Keycloak login and group sync, namespace-level access tiers, and the MediaWiki MCP server, through which LibreChat works in the wiki as the signed-in user within the same tiers |
 | `n8n` | n8n workflow automation behind an oauth2-proxy Keycloak SSO gate — the engine is never published, and only the webhook paths bypass the gate |
-| `paperless` | Paperless-ngx document management, an OIDC/RBAC MCP server for AI-assisted document access via LibreChat, and Keycloak SSO login for Paperless users |
+| `paperless` | Paperless-ngx document management, an OIDC/RBAC MCP server through which LibreChat reads documents as the signed-in user, and Keycloak SSO login for Paperless users |
 | `paperless-connect` | The same MCP/Keycloak layer as `paperless`, pointed at an existing standalone Paperless-ngx instance instead of a bundled one |
 | `qdrant` | A Qdrant vector database with an OIDC/RBAC-secured MCP server, giving LibreChat per-user vector search |
 | `qdrant-connect` | The same MCP layer as `qdrant`, pointed at an existing standalone Qdrant instance |

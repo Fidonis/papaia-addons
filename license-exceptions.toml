@@ -18,7 +18,7 @@ adr = "docs/development.md#licenses"
 expires = 2027-05-21
 approved_by = "pending (owner approval)"
 
-# Dependency of papaia-kit 0.1.3 (CI tool set). Its metadata only carries the
+# Dependency of papaia-kit 0.1.0 (CI tool set). Its metadata only carries the
 # classifier "BSD License"; LICENSE.txt in the wheel is the BSD 3-clause text.
 [[verified]]
 package = "jinja2"

@@ -1,9 +1,16 @@
-"""Tests for the pinned CI tool set (kit.lock, tools/ci/uv.lock)."""
+"""Tests for the pinned CI tool set (kit.lock, tools/ci/uv.lock).
+
+The repository vendors papaia-kit 0.1.0, the first public kit release. The
+release record of that version (kit commit, SOURCE_DATE_EPOCH and the sha256
+of the wheel in the release's SHA256SUMS) is pinned here, so a different
+build of the same version number cannot slip in.
+"""
 
 from __future__ import annotations
 
 import hashlib
 import re
+import subprocess
 import tomllib
 import unittest
 import zipfile
@@ -12,7 +19,30 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 KIT_LOCK = REPO_ROOT / "kit.lock"
 CI_PROJECT = REPO_ROOT / "tools" / "ci"
+VENDOR = REPO_ROOT / "vendor" / "papaia-kit"
 HASH = re.compile(r"^sha256:[0-9a-f]{64}$")
+
+# Release record of papaia-kit 0.1.0.
+RELEASE_VERSION = "0.1.0"
+RELEASE_COMMIT = "0ce412759e840ce6f8dfce0c6ad14e7180ac8a55"
+RELEASE_EPOCH = 1795451882
+RELEASE_WHEEL = "papaia_kit-0.1.0-py3-none-any.whl"
+RELEASE_WHEEL_SHA256 = "6ce3870703605ec0a710256abe74d94c29e2f8bbac681294477471ef36419299"
+
+# Kit version numbers that were never published: major 0, minor 1 with patch 1
+# to 9, minor 2 with any patch, and both minor series written with "x". Built
+# from parts so this file names none of them.
+_ZERO = "0"
+UNPUBLISHED = re.compile(
+    rf"(?<![\w.]){_ZERO}\.(?:1\.[1-9]|2\.[0-9]|[12]\.x)(?![\w-]|\.\d)"
+)
+KIT_WORD = re.compile(r"kit", re.IGNORECASE)
+KIT_PATH = re.compile(r"papaia[-_]kit[-/](?P<version>\d+\.\d+\.\d+)")
+
+# History lines stay in changelogs. n8n/ is not part of the integrated delivery
+# and is maintained outside the repository checks (as in tools/image_refs.py).
+SKIPPED_NAMES = {"CHANGELOG.md"}
+SKIPPED_TOP = {"n8n"}
 
 
 def normalise(name: str) -> str:
@@ -24,37 +54,84 @@ def locked_packages() -> dict[str, dict]:
     return {normalise(p["name"]): p for p in lock["package"]}
 
 
+def wheel_member(suffix: str) -> bytes:
+    with zipfile.ZipFile(REPO_ROOT / KitLockTest.wheel_path()) as wheel:
+        return next(wheel.read(n) for n in wheel.namelist() if n.endswith(suffix))
+
+
+def tracked_text_files() -> list[Path]:
+    names = subprocess.run(
+        ["git", "ls-files", "-z"], cwd=REPO_ROOT, capture_output=True, check=True
+    ).stdout.decode().split("\0")
+    files = []
+    for name in filter(None, names):
+        path = Path(name)
+        if path.parts[0] in SKIPPED_TOP or path.name in SKIPPED_NAMES:
+            continue
+        files.append(path)
+    return files
+
+
+def kit_version_findings(text: str) -> list[str]:
+    """Lines that name a kit version other than the vendored release."""
+    findings = []
+    for number, line in enumerate(text.splitlines(), 1):
+        if KIT_WORD.search(line) and UNPUBLISHED.search(line):
+            findings.append(f"{number}: {line.strip()}")
+            continue
+        for match in KIT_PATH.finditer(line):
+            if match["version"] != RELEASE_VERSION:
+                findings.append(f"{number}: {line.strip()}")
+                break
+    return findings
+
+
 class KitLockTest(unittest.TestCase):
+    @staticmethod
+    def wheel_path() -> str:
+        return f"vendor/papaia-kit/{RELEASE_VERSION}/{RELEASE_WHEEL}"
+
     def setUp(self) -> None:
         self.lock = tomllib.loads(KIT_LOCK.read_text(encoding="utf-8"))
 
     def test_lock_has_only_known_fields(self) -> None:
-        self.assertEqual(set(self.lock), {"version", "commit", "files"})
-        self.assertRegex(self.lock["version"], r"^\d+\.\d+\.\d+$")
-        self.assertRegex(self.lock["commit"], r"^[0-9a-f]{40}$")
+        self.assertEqual(set(self.lock), {"version", "commit", "source_date_epoch", "files"})
         self.assertEqual(len(self.lock["files"]), 1)
         self.assertEqual(set(self.lock["files"][0]), {"path", "sha256"})
 
+    def test_lock_names_the_kit_release_record(self) -> None:
+        self.assertEqual(self.lock["version"], RELEASE_VERSION)
+        self.assertEqual(self.lock["commit"], RELEASE_COMMIT)
+        self.assertEqual(self.lock["source_date_epoch"], RELEASE_EPOCH)
+        self.assertEqual(
+            self.lock["files"],
+            [{"path": self.wheel_path(), "sha256": RELEASE_WHEEL_SHA256}],
+        )
+
     def test_vendored_wheel_matches_the_lock(self) -> None:
-        version = self.lock["version"]
         entry = self.lock["files"][0]
-        expected = f"vendor/papaia-kit/{version}/papaia_kit-{version}-py3-none-any.whl"
-        self.assertEqual(entry["path"], expected)
         data = (REPO_ROOT / entry["path"]).read_bytes()
         self.assertEqual(hashlib.sha256(data).hexdigest(), entry["sha256"])
 
-    def test_license_files_ship_next_to_the_wheel(self) -> None:
-        folder = REPO_ROOT / "vendor" / "papaia-kit" / self.lock["version"]
-        self.assertTrue((folder / "LICENSE").is_file())
-        self.assertTrue((folder / "NOTICE").is_file())
+    def test_only_the_release_is_vendored(self) -> None:
+        self.assertEqual(sorted(p.name for p in VENDOR.iterdir()), [RELEASE_VERSION])
+        self.assertEqual(
+            sorted(p.name for p in (VENDOR / RELEASE_VERSION).iterdir()),
+            ["LICENSE", RELEASE_WHEEL],
+        )
+
+    def test_wheel_is_the_mit_licensed_release(self) -> None:
+        metadata = wheel_member(".dist-info/METADATA").decode()
+        self.assertIn(f"\nVersion: {RELEASE_VERSION}\n", metadata)
+        self.assertIn("\nLicense-Expression: MIT\n", metadata)
+        # The license text next to the wheel is the one the wheel ships.
+        self.assertEqual(
+            (VENDOR / RELEASE_VERSION / "LICENSE").read_bytes(),
+            wheel_member(".dist-info/licenses/LICENSE"),
+        )
 
     def test_every_runtime_dependency_of_the_kit_is_pinned(self) -> None:
-        with zipfile.ZipFile(REPO_ROOT / self.lock["files"][0]["path"]) as wheel:
-            metadata = next(
-                wheel.read(name).decode()
-                for name in wheel.namelist()
-                if name.endswith(".dist-info/METADATA")
-            )
+        metadata = wheel_member(".dist-info/METADATA").decode()
         needed = {
             normalise(re.split(r"[\s<>=!~;\[(]", line.split(":", 1)[1].strip(), maxsplit=1)[0])
             for line in metadata.splitlines()
@@ -63,6 +140,14 @@ class KitLockTest(unittest.TestCase):
         self.assertTrue(needed)
         self.assertLessEqual(needed, set(locked_packages()))
 
+    def test_ci_project_pins_the_vendored_wheel(self) -> None:
+        project = tomllib.loads((CI_PROJECT / "pyproject.toml").read_text(encoding="utf-8"))
+        self.assertIn(f"papaia-kit=={RELEASE_VERSION}", project["dependency-groups"]["ci"])
+        self.assertEqual(
+            project["tool"]["uv"]["sources"]["papaia-kit"],
+            {"path": "../../" + self.wheel_path()},
+        )
+
     def test_ci_lock_pins_the_vendored_wheel(self) -> None:
         kit = locked_packages()["papaia-kit"]
         self.assertEqual(kit["version"], self.lock["version"])
@@ -70,6 +155,36 @@ class KitLockTest(unittest.TestCase):
         self.assertEqual(
             [w["hash"] for w in kit["wheels"]], ["sha256:" + self.lock["files"][0]["sha256"]]
         )
+
+
+class KitVersionNamesTest(unittest.TestCase):
+    def test_patterns(self) -> None:
+        unpublished = [f"{_ZERO}.1.{n}" for n in range(1, 10)]
+        unpublished += [f"{_ZERO}.2.{n}" for n in range(10)] + [f"{_ZERO}.1.x", f"{_ZERO}.2.x"]
+        for version in unpublished:
+            with self.subTest(version=version):
+                self.assertTrue(kit_version_findings(f"papaia-kit {version}"))
+                self.assertTrue(kit_version_findings(f"see vendor/papaia-kit/{version}/"))
+        for line in (
+            "papaia-kit 0.1.0",
+            f"vendor/papaia-kit/{RELEASE_VERSION}/{RELEASE_WHEEL}",
+            "papaia-kit 1.2.0",
+            "papaia-kit 10.1.1",
+            "paperless-mcp-rbac 0.2.0-rc.1",
+            f"tool {_ZERO}.2.0 next to nothing",
+        ):
+            with self.subTest(line=line):
+                self.assertEqual(kit_version_findings(line), [])
+
+    def test_no_file_names_another_kit_version(self) -> None:
+        findings = []
+        for path in tracked_text_files():
+            try:
+                text = (REPO_ROOT / path).read_text(encoding="utf-8")
+            except (UnicodeDecodeError, FileNotFoundError):
+                continue  # binary files (the wheel) or a deletion not yet staged
+            findings += [f"{path}:{line}" for line in kit_version_findings(text)]
+        self.assertEqual(findings, [])
 
 
 class CiLockTest(unittest.TestCase):

@@ -53,7 +53,7 @@ papaia-addons/
 │   ├── fixtures/              # Test inputs, e.g. the seeded critical scan report
 │   └── test_*.py              # Unit tests for the tools
 ├── security/exceptions.yaml   # Accepted vulnerability findings, each with reason and expiry (≤ 90 days)
-├── vendor/papaia-kit/         # The papaia-kit wheel CI uses, with LICENSE and NOTICE; kit.lock pins its sha256
+├── vendor/papaia-kit/         # The papaia-kit release wheel CI uses, with its LICENSE (MIT); kit.lock pins it
 ├── license-records.json       # License records of the base images the mediawiki image is built from
 ├── license-exceptions.toml    # License exceptions (papaia-kit format), see "Licenses" below
 ├── CHANGELOG.md
@@ -184,6 +184,7 @@ shellcheck --severity=warning <script>
 - **Repository root**: the only Markdown files at the root are `README.md` and `CHANGELOG.md`; `python tools/root_markdown.py` fails for any other, and CI runs it. Further documentation goes under `docs/` or into the add-on directory it belongs to
 - **Image pins**: `python tools/image_refs.py check` (see the pin policy below)
 - The CI tool set is pinned in `tools/ci/uv.lock`; run any of the above through it with `UV_PROJECT=tools/ci uv run --locked <command>` to use the exact CI versions (ruff, yamllint, PyYAML, papaia-kit)
+- **papaia-kit**: the repository vendors one published kit release, `vendor/papaia-kit/<version>/` with the release wheel and its `LICENSE`. `kit.lock` names the version, the kit commit, its `source_date_epoch` and the wheel's sha256 exactly as the kit's release record (`SHA256SUMS`) states them; `tools/ci/pyproject.toml` pins the same version with the wheel as path source and `tools/ci/uv.lock` carries its sha256, so CI installs nothing else. To move to a new kit release, replace the folder with the release files, update `kit.lock`, the pin and the path in `tools/ci/pyproject.toml`, run `uv lock` in `tools/ci` and the expected record in `tools/test_kit_lock.py`, which also fails when a file outside the changelogs names another kit version. The mediawiki image label `de.fidonis.platform-kit` is read from `kit.lock`
 - Once a Python `src/` is introduced, the license-check workflow for `src/` starts applying as well
 
 ---

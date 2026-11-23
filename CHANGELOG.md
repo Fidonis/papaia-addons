@@ -10,6 +10,14 @@ based on merged pull requests; this file mirrors the published releases.
 
 ## [Unreleased]
 
+### Changed
+- **CI tool set on papaia-kit 0.1.0**, the first public kit release (MIT
+  license). `vendor/papaia-kit/0.1.0/` holds the release wheel and its
+  `LICENSE`; `kit.lock` names the release record (version, kit commit,
+  `source_date_epoch`, wheel sha256). The kit was renumbered for its first
+  release, so the checks and the manifest contract are unchanged; the
+  mediawiki image label `de.fidonis.platform-kit` now reads `0.1.0`.
+
 ## [1.2.0] - 2026-10-24
 
 ### Added

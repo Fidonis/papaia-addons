@@ -3,9 +3,9 @@
 # CI installs the wheel only after its sha256 matches the entry below;
 # tools/test_kit_lock.py checks the file, the wheel and the locked
 # tool set in tools/ci/uv.lock against each other.
-version = "0.1.0"
-commit = "0e00311d9089f5ca6ffb5ca65a9a3ba338d0b424"
+version = "0.1.3"
+commit = "5af174119702348ec74e2bab740c39dfd47f78dc"
 
 [[files]]
-path = "vendor/papaia-kit/0.1.0/papaia_kit-0.1.0-py3-none-any.whl"
-sha256 = "a066e41e25137b5d46adcd0cf17287dc89c470e3a5862df51489e1ea5ec3beab"
+path = "vendor/papaia-kit/0.1.3/papaia_kit-0.1.3-py3-none-any.whl"
+sha256 = "94f356ca380308681da2b8f5f83c9c581a60427d2dda71c73489ff6a74e5f56e"

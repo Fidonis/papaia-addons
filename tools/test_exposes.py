@@ -58,7 +58,7 @@ requires:
 integration:
   keycloak:
     clients:
-      - integration/mcp-demo.json
+      - integration/demo.json
 components:
   - id: demo
     name: Demo
@@ -178,7 +178,9 @@ def make_addon(root: Path, manifest: str = MANIFEST, compose: str = COMPOSE) -> 
     write(addon / components.COMPOSE, compose)
     write(addon / components.ENV_EXAMPLE, ENV)
     write(addon / components.CHANGELOG, CHANGELOG)
-    write(addon / "integration/mcp-demo.json", json.dumps({"clientId": "mcp-demo"}) + "\n")
+    # The sign-in client of the web interface; the core creates the tool server's
+    # resource-server client `mcp-demo` from `exposes:`.
+    write(addon / "integration/demo.json", json.dumps({"clientId": "demo"}) + "\n")
     write(addon / "schemas/demo-export-1.json", json.dumps({"type": "object"}) + "\n")
     listed = components.load_manifest(addon).get("components") or []
     write(addon / components.README, "# demo\n\n" + components.render_block(listed) + "\n")
@@ -239,8 +241,57 @@ class FixtureTests(unittest.TestCase):
             "address.service `demo-mcp`", MANIFEST.replace("service: app-mcp", "service: demo-mcp")
         )
 
-    def test_audience_must_be_a_shipped_keycloak_client(self) -> None:
-        self.assertReported("audience `mcp-other`", MANIFEST.replace("mcp-demo\n", "mcp-other\n", 1))
+    def test_client_of_the_audience_is_left_to_the_core(self) -> None:
+        # The core creates the resource-server client of every declared audience; a
+        # shipped copy would be a second description of it.
+        manifest = MANIFEST.replace("integration/demo.json", "integration/mcp-demo.json", 1)
+        addon = make_addon(self.root, manifest)
+        write(addon / "integration/mcp-demo.json", json.dumps({"clientId": "mcp-demo"}) + "\n")
+        problems = components.check_addon(addon)
+        self.assertTrue(
+            any("demo.items: ships the Keycloak client `mcp-demo`" in p for p in problems), problems
+        )
+
+    def test_chat_fragment_is_left_to_the_core(self) -> None:
+        manifest = MANIFEST.replace(
+            "components:\n", "  librechat: integration/librechat.yaml\ncomponents:\n", 1
+        )
+        addon = make_addon(self.root, manifest)
+        write(addon / "integration/librechat.yaml", "mcpServers: {}\n")
+        problems = components.check_addon(addon)
+        self.assertTrue(
+            any("demo.items: ships a LibreChat fragment" in p for p in problems), problems
+        )
+
+    def test_audience_mapper_is_left_to_the_core(self) -> None:
+        manifest = MANIFEST.replace(
+            "components:\n",
+            "    client_mappers:\n      librechat:\n        - integration/mapper.json\ncomponents:\n",
+            1,
+        )
+        addon = make_addon(self.root, manifest)
+        mapper = {
+            "name": "mcp-demo-audience",
+            "protocolMapper": "oidc-audience-mapper",
+            "config": {"included.client.audience": "mcp-demo"},
+        }
+        write(addon / "integration/mapper.json", json.dumps(mapper) + "\n")
+        problems = components.check_addon(addon)
+        self.assertTrue(
+            any("demo.items: ships the audience mapper of `mcp-demo`" in p for p in problems),
+            problems,
+        )
+
+    def test_mapper_of_another_audience_stays_allowed(self) -> None:
+        manifest = MANIFEST.replace(
+            "components:\n",
+            "    client_mappers:\n      librechat:\n        - integration/mapper.json\ncomponents:\n",
+            1,
+        )
+        addon = make_addon(self.root, manifest)
+        mapper = {"protocolMapper": "oidc-audience-mapper", "config": {"included.client.audience": "x"}}
+        write(addon / "integration/mapper.json", json.dumps(mapper) + "\n")
+        self.assertEqual(components.check_addon(addon), [])
 
     def test_operation_names_are_unique(self) -> None:
         self.assertReported(
@@ -445,6 +496,35 @@ class PaperlessTests(unittest.TestCase):
         entry = self.entry()
         for key in ("roles", "events", "service_accounts", "delegation", "downstream"):
             self.assertNotIn(key, entry)
+
+    def test_marks_the_identity_taken_from_a_header(self) -> None:
+        # Paperless signs a person in from `X-Papaia-Remote-User`; the core never
+        # publishes a port of a marked entry's service (exposes.v1 `header_identity`).
+        entry = self.entry()
+        self.assertIs(entry.get("header_identity"), True)
+        self.assertIn("person", entry["identity"])
+
+    def test_ships_no_description_the_core_generates(self) -> None:
+        # Chat entry, audience mapper and the `mcp-paperless` resource-server client
+        # come from `exposes:`; only the web sign-in client and the proxy host stay.
+        integration = self.manifest["integration"]
+        self.assertNotIn("librechat", integration)
+        self.assertNotIn("client_mappers", integration["keycloak"])
+        self.assertEqual(integration["keycloak"]["clients"], ["integration/infra/keycloak/paperless.json"])
+        shipped = sorted(
+            str(p.relative_to(self.path)) for p in (self.path / "integration").rglob("*") if p.is_file()
+        )
+        self.assertEqual(
+            shipped,
+            ["integration/infra/keycloak/paperless.json", "integration/infra/nginx/paperless.conf"],
+        )
+
+    def test_no_secret_is_asked_for_the_generated_client(self) -> None:
+        # The core's resource-server client is bearer-only and has no secret.
+        self.assertNotIn("KC_MCP_PAPERLESS_CLIENT_SECRET", self.manifest["env_prompts"])
+        self.assertNotIn("KC_MCP_PAPERLESS_CLIENT_SECRET", self.manifest["env_replace_secrets"])
+        env = (self.path / components.ENV_EXAMPLE).read_text(encoding="utf-8")
+        self.assertNotIn("KC_MCP_PAPERLESS_CLIENT_SECRET", env)
 
 
 class RepositoryTests(unittest.TestCase):

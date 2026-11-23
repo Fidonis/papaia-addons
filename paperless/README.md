@@ -92,7 +92,6 @@ Edit `.env` and fill in all `CHANGE_ME` values:
 | `PAPERLESS_SECRET_KEY` | Django secret key (generate ≥ 64 chars randomly) |
 | `PAPERLESS_ADMIN_PASSWORD` | Bootstrap admin password (generate randomly) |
 | `KC_PAPERLESS_CLIENT_SECRET` | Keycloak client secret for the `paperless` OIDC client |
-| `KC_MCP_PAPERLESS_CLIENT_SECRET` | Keycloak client secret for `mcp-paperless` (can be any random value; the client does not use it for login) |
 
 ### 2. Register Keycloak clients
 
@@ -104,11 +103,15 @@ In the Keycloak admin UI, create two clients in the `papaia` realm:
 - Redirect URIs: `<PAPERLESS_PUBLIC_URL>/*`
 - Protocol mapper: realm roles → `groups` claim (see `integration/infra/keycloak/paperless.json`)
 
-**Client `mcp-paperless`** (resource server, no flows):
+**Client `mcp-paperless`** (bearer-only resource server, no flows):
 - Client ID: `mcp-paperless`
-- No redirect URIs
-- All flows disabled
-- (see `integration/infra/keycloak/mcp-paperless.json`)
+- Client authentication on, no redirect URIs
+- Standard flow, implicit flow, direct access grants and service accounts off
+- Full scope allowed off
+
+With the bundled Keycloak, `papaia-ctl` creates this client itself from the
+manifest's `exposes:` entry (realm sync on every start); create it by hand only
+with an external identity provider.
 
 **Role → group mapping:**
 The `groups` protocol mapper puts the user's realm roles into the token, and
@@ -124,8 +127,10 @@ superuser status from a claim; break-glass superuser access stays
 Add a protocol mapper of type *Audience* to the existing `librechat` client:
 - Name: `mcp-paperless-audience`
 - Included Client Audience: `mcp-paperless`
-- Add to access token: yes
-- (see `integration/infra/keycloak/librechat-audience-mapper.json`)
+- Add to ID token: no; add to access token: yes; add to token introspection: yes
+
+With the bundled Keycloak, `papaia-ctl` adds this mapper itself; with an external
+identity provider, `papaia-ctl addon install` names the audience to map by hand.
 
 ### 3. Wire the network (Seam 1)
 
@@ -192,14 +197,15 @@ docker compose -f papaia/src/docker-compose.yml \
 
 ### 4. Add the MCP server to LibreChat (Seam 3)
 
-Add the following to your effective `librechat.yaml`
-(or to `papaia-config/overlay/ai/librechat/librechat.yaml`):
+`papaia-ctl` renders this entry from the manifest's `exposes:` entry; the add-on
+ships no LibreChat fragment. Without `papaia-ctl`, add the following to your
+effective `librechat.yaml` (or to `papaia-config/overlay/ai/librechat/librechat.yaml`):
 
 ```yaml
 mcpServers:
-  Paperless:
-    title: 'Paperless'
-    description: 'OIDC-secured document management via Paperless-ngx.'
+  mcp-paperless:
+    title: 'Document archive'
+    description: 'Search, read, file and annotate documents in Paperless with the rights of the person.'
     type: streamable-http
     url: http://paperless-mcp:8000/mcp
     headers:
@@ -358,6 +364,13 @@ own description of the server.
 | Identity | the person, or a service account a consuming module declares |
 | Operations | every tool of `paperless-mcp-rbac`, with effect (`read`, `write`, `delete`), input schema and highest data class; `delete_document` is confirmed with `check_access` first |
 | Standard operations | `describe_access`, `check_access` |
+| Header identity | `header_identity: true`: Paperless takes the person from `X-Papaia-Remote-User`, so the core never publishes a port of the entry's service |
+
+The core generates from this entry what the add-on used to ship: the
+resource-server client `mcp-paperless`, the audience mapper
+`mcp-paperless-audience` on the `librechat` client and the LibreChat entry
+`mcp-paperless`. Only the web sign-in client `paperless` and the proxy host stay
+under `integration/`.
 
 Data classes use the eight-class scale of papaia-kit. A general archive can hold
 health data (Art. 9 GDPR) and secrets entrusted to professions bound to
@@ -421,7 +434,6 @@ describes its `manifest.json`.
 
 ## Known limitations
 
-- **`mcpSettings.allowedDomains`** must be updated manually (or via overlay) when adding
-  this addon alongside other MCP addons. The papaia config render merges dict keys
-  but replaces lists wholesale; a fix is tracked in the papaia repository.
-- **Keycloak client registration** is not automated in this version; see step 2 above.
+- **Keycloak client `paperless`** (web sign-in) is still imported from
+  `integration/infra/keycloak/paperless.json`; its secret is copied by hand after the
+  import (`KC_PAPERLESS_CLIENT_SECRET`, see step 2 above).

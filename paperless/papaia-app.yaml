@@ -159,11 +159,6 @@ env_prompts:
     hint: "Copy from Keycloak Admin UI → Clients → paperless → Credentials → Client Secret"
     secret: true
 
-  KC_MCP_PAPERLESS_CLIENT_SECRET:
-    label: "Keycloak client secret (mcp-paperless)"
-    hint: "Copy from Keycloak Admin UI → Clients → mcp-paperless → Credentials → Client Secret"
-    secret: true
-
   # ── Paperless-ngx — OCR ───────────────────────────────────────────────────
   PAPERLESS_OCR_LANGUAGE:
     label: "Tesseract OCR primary language"
@@ -211,7 +206,7 @@ env_prompts:
   # ── MCP server ────────────────────────────────────────────────────────────
   PAPERLESS_MCP_OIDC_AUDIENCE:
     label: "MCP server token audience"
-    hint: "Must match the mcp-paperless-audience mapper on the LibreChat Keycloak client"
+    hint: "Must equal the audience in exposes (mcp-paperless); the core maps it into the LibreChat token"
     type: text
 
   PAPERLESS_MCP_OIDC_JWKS_CACHE_TTL:
@@ -260,18 +255,14 @@ env_prompts:
 env_replace_secrets:
   KC_PAPERLESS_CLIENT_SECRET:
     hint: "Keycloak Admin UI → Clients → paperless → Credentials → Client Secret"
-  KC_MCP_PAPERLESS_CLIENT_SECRET:
-    hint: "Keycloak Admin UI → Clients → mcp-paperless → Credentials → Client Secret"
 
+# The web sign-in client and the proxy host. The core generates the rest from
+# `exposes:` below: the resource-server client `mcp-paperless` (realm sync), the
+# audience mapper on the `librechat` client and the LibreChat entry.
 integration:
   keycloak:
     clients:
       - integration/infra/keycloak/paperless.json
-      - integration/infra/keycloak/mcp-paperless.json
-    client_mappers:
-      librechat:
-        - integration/infra/keycloak/librechat-audience-mapper.json
-  librechat: integration/ai/librechat/librechat.yaml
   nginx: integration/infra/nginx/paperless.conf
 
 # The one description of what this add-on offers (contract generation 7,
@@ -297,6 +288,10 @@ exposes:
     # `service`: event-started runs read through a declared service account of
     # the consuming module, never with a person's identity.
     identity: [person, service]
+    # Paperless signs a person in from the `X-Papaia-Remote-User` header that
+    # the MCP server sets through the gate; the core never publishes a port of
+    # this entry's service.
+    header_identity: true
     standard_operations: [describe_access, check_access]
     operations:
       - name: search_documents

@@ -12,7 +12,12 @@ cannot see from the section alone, because it needs the add-on directory:
   generations from 7 on, every entry repeats that list, and every declared
   generation has its meaning in a comment of the `requires:` block;
 * entry ids and operation names are unique, `address.service` is a Compose
-  service, `audience` is the client id of a shipped Keycloak client;
+  service;
+* the add-on ships no description the core generates from an entry: no
+  Keycloak client whose id is an entry's `audience` (the core creates the
+  resource-server client), and next to a `kind: mcp` entry for persons no
+  LibreChat fragment (`integration.librechat`) and no audience mapper for its
+  audience on the `librechat` client (`integration.keycloak.client_mappers`);
 * `resource.id_field` names a property of the operation's `input_schema`;
 * every named volume of `docker-compose.yml` is exactly one backup item in
   `volumes[]`, and `storage.secrets[].location` names one of them;
@@ -139,6 +144,53 @@ def keycloak_client_ids(path: Path, manifest: dict[str, Any]) -> set[str] | None
     return ids
 
 
+def librechat_mapper_audiences(path: Path, manifest: dict[str, Any]) -> set[str]:
+    """Audiences that the shipped mappers for the `librechat` client add."""
+    keycloak = (manifest.get("integration") or {}).get("keycloak")
+    mappers = keycloak.get("client_mappers") if isinstance(keycloak, dict) else None
+    files = mappers.get("librechat") if isinstance(mappers, dict) else None
+    found: set[str] = set()
+    for relative in files if isinstance(files, list) else []:
+        try:
+            mapper = json.loads((path / str(relative)).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue  # components.py reports the missing file
+        config = mapper.get("config") if isinstance(mapper, dict) else None
+        audience = config.get("included.client.audience") if isinstance(config, dict) else None
+        if isinstance(audience, str):
+            found.add(audience)
+    return found
+
+
+def check_generated(
+    label: str, entry: dict[str, Any], manifest: dict[str, Any], clients: set[str], mapped: set[str]
+) -> list[str]:
+    """A description the core generates from the entry must not ship as well."""
+    audience = entry.get("audience")
+    if not isinstance(audience, str):
+        return []
+    problems = []
+    if audience in clients:
+        problems.append(
+            f"{label}: ships the Keycloak client `{audience}`; the core creates the client of"
+            " a declared audience"
+        )
+    identity = entry.get("identity")
+    if entry.get("kind") != "mcp" or not isinstance(identity, list) or "person" not in identity:
+        return problems
+    if (manifest.get("integration") or {}).get("librechat"):
+        problems.append(
+            f"{label}: ships a LibreChat fragment (integration.librechat); the core renders"
+            " the chat entry of the tool server"
+        )
+    if audience in mapped:
+        problems.append(
+            f"{label}: ships the audience mapper of `{audience}` for the librechat client; the"
+            " core generates it"
+        )
+    return problems
+
+
 def _generations(value: object) -> list[int] | None:
     if not isinstance(value, list) or not value:
         return None
@@ -203,7 +255,8 @@ def check_exposes(path: Path, manifest: dict[str, Any]) -> list[str]:
     compose = compose_file(path)
     services = _keys(compose.get("services"))
     volumes = _keys(compose.get("volumes"))
-    clients = keycloak_client_ids(path, manifest)
+    clients = keycloak_client_ids(path, manifest) or set()
+    mapped = librechat_mapper_audiences(path, manifest)
 
     ids: set[str] = set()
     backup_items: dict[str, int] = {}
@@ -235,12 +288,7 @@ def check_exposes(path: Path, manifest: dict[str, Any]) -> list[str]:
         if service is not None and service not in services:
             problems.append(f"{label}: address.service `{service}` is not a service in {COMPOSE}")
 
-        audience = entry.get("audience")
-        if audience is not None and clients is not None and audience not in clients:
-            problems.append(
-                f"{label}: audience `{audience}` is not the clientId of a Keycloak client the"
-                " add-on ships"
-            )
+        problems.extend(check_generated(label, entry, manifest, clients, mapped))
 
         problems.extend(check_operations(label, entry.get("operations")))
 

@@ -16,7 +16,8 @@ declared next to it or derived from it, and this script keeps the two honest:
 It also checks what the rest of a manifest says against the files next to it
 (`name`, `env_prompts`, `integration`, `networks.app_network`, the variables
 Compose substitutes, the `exposes:` section through `exposes.py`) and that each add-on keeps a `CHANGELOG.md` with a section
-for its current version.
+for its current version. `check` also runs the check of the module catalogue
+(`catalogue.yaml`, `catalogue.py`).
 
 Commands:
   check          fail on any disagreement (CI runs this)
@@ -36,6 +37,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import catalogue
 import exposes
 import yaml
 
@@ -596,6 +598,9 @@ def main(argv: list[str] | None = None) -> int:
                 "Run `python tools/components.py fix` to rewrite what Compose decides.",
                 file=sys.stderr,
             )
+        for problem in catalogue.check(root):
+            print(f"catalogue: {problem}", file=sys.stderr)
+            failed = True
         return 1 if failed else 0
     if args.command == "fix":
         for path in addon_dirs(root):

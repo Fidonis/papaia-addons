@@ -38,9 +38,11 @@ papaia-addons/
 │       ├── infra/keycloak/*.json        # Client export(s) + audience mapper(s), imported on install
 │       ├── ai/librechat/librechat.yaml  # MCP server registration for LibreChat
 │       └── infra/nginx/*.conf           # Optional vhost fragment (public-facing add-ons only)
+├── catalogue.yaml             # Module catalogue: add-ons from their own repositories, pinned by version, commit and digest
 ├── docs/
 │   └── development.md         # This document
 ├── tools/
+│   ├── catalogue.py           # Checks, pins, verifies and fetches the entries of catalogue.yaml
 │   ├── components.py          # Keeps component versions, .env.example and README tables equal to Compose; checks manifests and changelogs
 │   ├── exposes.py             # Holds the `exposes:` section to the add-on directory; compares generation comments with the core
 │   ├── root_markdown.py       # Allows only README.md and CHANGELOG.md as Markdown files at the repository root
@@ -89,6 +91,30 @@ Readers ignore unknown manifest keys, so new fields can be introduced without br
 `python tools/components.py check` also holds a manifest to the files next to it: `name` equals the directory name, every `env_prompts` and `env_replace_secrets` key is in `.env.example` (active or commented out), every path under `integration` exists, `networks.app_network` is the same string as a network `name:` in `docker-compose.yml`, and every `${VAR}` that Compose substitutes is in `.env.example`, except the variables the core `.env` hands to every add-on (`COMPOSE_PROJECT_NAME`, `GID`, `HOST_IP`, `PAPAIA_PROJECT`, `UID`).
 
 Through `tools/exposes.py` it also checks that no manifest carries `@UNDECIDED@` and, for a manifest with `exposes:`, what the section claims about the add-on directory: `requires.addon_api` as above and repeated unchanged in every entry, unique entry ids and operation names, `address.service` a Compose service, `audience` the client id of a shipped Keycloak client, `resource.id_field` a property of the operation's input schema, every named Compose volume exactly one item of `volumes[]`, `storage.secrets[].location` one of those volumes, and `export.exit.schema` a JSON file in the add-on directory. Schema, names and data classes are left to the manifest conformance check of papaia-kit. `python tools/exposes.py generations --core <core checkout>` compares the generation comments of every manifest with the core's `ADDON_API` table.
+
+### The module catalogue (`catalogue.yaml`)
+
+Studio (`papaia-studio`), Data (`papaia-data`), Flow (`papaia-flow`), the assistant (`papaia-assist`) and the SQL Server source (`mssql-mcp`) ship their add-on bundle in their own repository under `deploy/papaia-addon/`. `catalogue.yaml` (schema `papaia.addon-catalogue/1`) lists them; an entry never names an add-on directory of this repository.
+
+| Field | Meaning |
+|---|---|
+| `name` | The add-on name, equal to `name` in the bundle's manifest |
+| `title` | Display name (at most 40 characters) |
+| `version`, `description` | Copied from the bundle's manifest at the pinned commit |
+| `requires` | `addon_api` and `papaia_compat` of the manifest; `addons` as `{name, optional}` (plus `version` where the manifest names a range), whatever spelling the manifest uses |
+| `source` | `repo` (https URL without credentials, port or query), `commit` (full commit id), `path` (bundle path, relative, no `..`) |
+| `digest` | Bundle digest `sha256:<hex>`: SHA-256 over one line `<mode> <sha256 of the file> <path>` per file of the bundle at the commit, sorted by path; mode `100644` or `100755`. Symbolic links and submodules are refused. The compose file is part of the bundle, so the image pins of the module are covered too |
+
+Unknown fields are refused. The file is generated: `python tools/catalogue.py pin <name> --repo <clone>` writes an entry from a clone of the module repository (its `HEAD`, or `--commit`; a new entry also needs `--url` and `--title`). `python tools/components.py check` runs `python tools/catalogue.py check`, which fails for an invalid entry and for a file that is not in the form `pin` writes.
+
+| Command | What it does |
+|---|---|
+| `python tools/catalogue.py list [--json]` | Name, version, description and prerequisites of every entry |
+| `python tools/catalogue.py verify --repo <name>=<clone> ...` | Compares entries with their bundle at the pinned commit; fails on any difference |
+| `python tools/catalogue.py fetch <name> --repo <clone> --into <dir>` | Writes the pinned bundle into a new or empty directory after its digest matched; writes nothing otherwise |
+| `python tools/catalogue.py matrix --core <core checkout> [--suite X.Y.Z]` | Each `version` inside its cell of the core's `compat/suite.yaml` and each `addon_api` generation inside the suite's window |
+
+At release-cut time the entries are pinned to the tagged commits of the module repositories, and `verify` and `matrix` run against them.
 
 ### The add-on changelog (`<addon>/CHANGELOG.md`)
 

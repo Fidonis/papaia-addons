@@ -6,10 +6,10 @@
 # after its sha256 matches the entry below; tools/test_kit_lock.py checks
 # the file, the wheel and the locked tool set in tools/ci/uv.lock against
 # each other.
-version = "0.1.0"
-commit = "0ce412759e840ce6f8dfce0c6ad14e7180ac8a55"
-source_date_epoch = 1795451882
+version = "0.1.1"
+commit = "14b9c833fc2208777f6304a8bda3a4c2f9cba990"
+source_date_epoch = 1795559077
 
 [[files]]
-path = "vendor/papaia-kit/0.1.0/papaia_kit-0.1.0-py3-none-any.whl"
-sha256 = "6ce3870703605ec0a710256abe74d94c29e2f8bbac681294477471ef36419299"
+path = "vendor/papaia-kit/0.1.1/papaia_kit-0.1.1-py3-none-any.whl"
+sha256 = "372c50d7a974b9c48ef9b9ece474fe65fd6bc20a19b6bd9b9d283c9a1b802492"

@@ -11,12 +11,17 @@ based on merged pull requests; this file mirrors the published releases.
 ## [Unreleased]
 
 ### Changed
-- **CI tool set on papaia-kit 0.1.0**, the first public kit release (MIT
-  license). `vendor/papaia-kit/0.1.0/` holds the release wheel and its
-  `LICENSE`; `kit.lock` names the release record (version, kit commit,
-  `source_date_epoch`, wheel sha256). The kit was renumbered for its first
-  release, so the checks and the manifest contract are unchanged; the
-  mediawiki image label `de.fidonis.platform-kit` now reads `0.1.0`.
+- **CI tool set on papaia-kit 0.1.1**, the patch release after the first
+  public kit release 0.1.0 (MIT license). `vendor/papaia-kit/0.1.1/` holds
+  the release wheel and its `LICENSE`; `kit.lock` names the release record
+  (version, kit commit, `source_date_epoch`, wheel sha256). The kit was
+  renumbered for its first release, so the checks and the manifest contract
+  are unchanged; the mediawiki image label `de.fidonis.platform-kit` now
+  reads `0.1.1`.
+- **Start boundary of the commit metadata check.** `commit-boundary.toml`
+  names `e0de06f` by its full SHA with the reason for the boundary;
+  `papaia-kit repo commits` leaves that commit and its ancestors out and
+  checks every later commit for author, committer, sign-off and wording.
 
 ## [1.2.0] - 2026-10-24
 

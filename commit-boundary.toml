@@ -1,0 +1,9 @@
+# Start boundary of `papaia-kit repo commits` for this repository.
+#
+# The commit named here and all its ancestors are not checked; every later
+# commit is checked for author, committer, sign-off and wording. The commit is
+# named by its full SHA and must be an ancestor of the end of every checked
+# range. Changing this file needs a reviewed change with its own reason.
+version = 1
+commit = "e0de06ffc2a94d5b819368a9e93bd3ddef545829"
+reason = "Commit metadata rules apply from this commit on; the author of this commit confirmed the Developer Certificate of Origin 1.1 for it in writing on 2026-11-24."

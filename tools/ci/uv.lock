@@ -318,7 +318,7 @@ ci = [
 
 [package.metadata.requires-dev]
 ci = [
-    { name = "papaia-kit", path = "../../vendor/papaia-kit/0.1.0/papaia_kit-0.1.0-py3-none-any.whl" },
+    { name = "papaia-kit", path = "../../vendor/papaia-kit/0.1.1/papaia_kit-0.1.1-py3-none-any.whl" },
     { name = "pyyaml", specifier = "==6.0.3" },
     { name = "ruff", specifier = "==0.17.5" },
     { name = "yamllint", specifier = "==1.38.0" },
@@ -326,8 +326,8 @@ ci = [
 
 [[package]]
 name = "papaia-kit"
-version = "0.1.0"
-source = { path = "../../vendor/papaia-kit/0.1.0/papaia_kit-0.1.0-py3-none-any.whl" }
+version = "0.1.1"
+source = { path = "../../vendor/papaia-kit/0.1.1/papaia_kit-0.1.1-py3-none-any.whl" }
 dependencies = [
     { name = "cryptography" },
     { name = "jinja2" },
@@ -337,7 +337,7 @@ dependencies = [
     { name = "referencing" },
 ]
 wheels = [
-    { filename = "papaia_kit-0.1.0-py3-none-any.whl", hash = "sha256:6ce3870703605ec0a710256abe74d94c29e2f8bbac681294477471ef36419299" },
+    { filename = "papaia_kit-0.1.1-py3-none-any.whl", hash = "sha256:372c50d7a974b9c48ef9b9ece474fe65fd6bc20a19b6bd9b9d283c9a1b802492" },
 ]
 
 [package.metadata]

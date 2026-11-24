@@ -56,6 +56,7 @@ papaia-addons/
 ├── vendor/papaia-kit/         # The papaia-kit release wheel CI uses, with its LICENSE (MIT); kit.lock pins it
 ├── license-records.json       # License records of the base images the mediawiki image is built from
 ├── license-exceptions.toml    # License exceptions (papaia-kit format), see "Licenses" below
+├── commit-boundary.toml       # Start commit of the commit metadata check (papaia-kit format), see "Continuous integration" below
 ├── CHANGELOG.md
 └── README.md
 ```
@@ -199,7 +200,7 @@ shellcheck --severity=warning <script>
 | Component versions | `components.py check`, `image_refs.py check`, the unit tests of `tools/` |
 | Manifest conformance | `papaia-kit conformance manifest` for every manifest with `exposes:`, with its compose file |
 | License check | `papaia-kit licenses check` over the CI tool set (`tools/ci/uv.lock`, build scope) and the base images in `license-records.json` |
-| Word check and commit metadata | Denied terms of papaia-kit in the lines the change adds (`word_check.py`), counted from the merge base; author, committer, sign-off and wording of its commits (`papaia-kit repo commits`) |
+| Word check and commit metadata | Denied terms of papaia-kit in the lines the change adds (`word_check.py`), counted from the merge base; author, committer, sign-off and wording of its commits (`papaia-kit repo commits`), from the start boundary in `commit-boundary.toml` on |
 | Vulnerability scan | Trivy over every pinned image default of the delivered add-ons (`image_refs.py list`), each for `linux/amd64` and `linux/arm64`, and over the CI tool set (`tools/ci/uv.lock`), each through `scan_gate.py`; nightly too, so a new CRITICAL finding with a fix fails the scheduled run |
 | Secret scan (full history) | gitleaks, pinned by version and sha256, over every commit; `.gitleaks.toml` allows only the pinned extension commits of the mediawiki image build |
 | Conventional Commit PR title | The PR title |

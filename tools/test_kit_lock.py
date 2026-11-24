@@ -1,9 +1,9 @@
 """Tests for the pinned CI tool set (kit.lock, tools/ci/uv.lock).
 
-The repository vendors papaia-kit 0.1.0, the first public kit release. The
-release record of that version (kit commit, SOURCE_DATE_EPOCH and the sha256
-of the wheel in the release's SHA256SUMS) is pinned here, so a different
-build of the same version number cannot slip in.
+The repository vendors papaia-kit 0.1.1, the patch release after the first
+public kit release 0.1.0. The release record of that version (kit commit,
+SOURCE_DATE_EPOCH and the sha256 of the wheel in the release's SHA256SUMS) is
+pinned here, so a different build of the same version number cannot slip in.
 """
 
 from __future__ import annotations
@@ -22,19 +22,19 @@ CI_PROJECT = REPO_ROOT / "tools" / "ci"
 VENDOR = REPO_ROOT / "vendor" / "papaia-kit"
 HASH = re.compile(r"^sha256:[0-9a-f]{64}$")
 
-# Release record of papaia-kit 0.1.0.
-RELEASE_VERSION = "0.1.0"
-RELEASE_COMMIT = "0ce412759e840ce6f8dfce0c6ad14e7180ac8a55"
-RELEASE_EPOCH = 1795451882
-RELEASE_WHEEL = "papaia_kit-0.1.0-py3-none-any.whl"
-RELEASE_WHEEL_SHA256 = "6ce3870703605ec0a710256abe74d94c29e2f8bbac681294477471ef36419299"
+# Release record of papaia-kit 0.1.1.
+RELEASE_VERSION = "0.1.1"
+RELEASE_COMMIT = "14b9c833fc2208777f6304a8bda3a4c2f9cba990"
+RELEASE_EPOCH = 1795559077
+RELEASE_WHEEL = "papaia_kit-0.1.1-py3-none-any.whl"
+RELEASE_WHEEL_SHA256 = "372c50d7a974b9c48ef9b9ece474fe65fd6bc20a19b6bd9b9d283c9a1b802492"
 
-# Kit version numbers that were never published: major 0, minor 1 with patch 1
+# Kit version numbers that were never published: major 0, minor 1 with patch 2
 # to 9, minor 2 with any patch, and both minor series written with "x". Built
 # from parts so this file names none of them.
 _ZERO = "0"
 UNPUBLISHED = re.compile(
-    rf"(?<![\w.]){_ZERO}\.(?:1\.[1-9]|2\.[0-9]|[12]\.x)(?![\w-]|\.\d)"
+    rf"(?<![\w.]){_ZERO}\.(?:1\.[2-9]|2\.[0-9]|[12]\.x)(?![\w-]|\.\d)"
 )
 KIT_WORD = re.compile(r"kit", re.IGNORECASE)
 KIT_PATH = re.compile(r"papaia[-_]kit[-/](?P<version>\d+\.\d+\.\d+)")
@@ -159,7 +159,7 @@ class KitLockTest(unittest.TestCase):
 
 class KitVersionNamesTest(unittest.TestCase):
     def test_patterns(self) -> None:
-        unpublished = [f"{_ZERO}.1.{n}" for n in range(1, 10)]
+        unpublished = [f"{_ZERO}.1.{n}" for n in range(2, 10)]
         unpublished += [f"{_ZERO}.2.{n}" for n in range(10)] + [f"{_ZERO}.1.x", f"{_ZERO}.2.x"]
         for version in unpublished:
             with self.subTest(version=version):
@@ -167,6 +167,7 @@ class KitVersionNamesTest(unittest.TestCase):
                 self.assertTrue(kit_version_findings(f"see vendor/papaia-kit/{version}/"))
         for line in (
             "papaia-kit 0.1.0",
+            "papaia-kit 0.1.1",
             f"vendor/papaia-kit/{RELEASE_VERSION}/{RELEASE_WHEEL}",
             "papaia-kit 1.2.0",
             "papaia-kit 10.1.1",

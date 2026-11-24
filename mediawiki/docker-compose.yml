@@ -41,7 +41,7 @@ services:
   mediawiki:
     # <MediaWiki version>-<add-on version>: a new add-on version that changes
     # image/ publishes a new tag, so a cached image is never mistaken for it.
-    image: ${MEDIAWIKI_IMAGE:-ghcr.io/fidonis/papaia-mediawiki:1.43.11-1.0.0@sha256:c6831705ccbad3d784ca77c49a1993c8272d940065011130e4c6f2469a3f4a5a}
+    image: ${MEDIAWIKI_IMAGE:-127.0.0.1:57500/unpublished/papaia-mediawiki:1.43.11-1.0.1@sha256:b82c12c4a74f83d3756b57eba36cacce8867035b5a3352ba76a479e80ce1995a}
     # Used when the image cannot be pulled: compose builds it from the
     # add-on's own Dockerfile instead (needs internet, takes minutes).
     build:
@@ -167,7 +167,7 @@ services:
   #  entrypoint to the shared credentials volume.
   # ═══════════════════════════════════════════════════════════════════════════
   mediawiki-mcp:
-    image: ${MEDIAWIKI_MCP_IMAGE:-ghcr.io/professionalwiki/mediawiki-mcp-server:0.20.0@sha256:8b145edac459b90f31fb7febc345f725762a6581d286bb648cfef8db235f916b}
+    image: ${MEDIAWIKI_MCP_IMAGE:-ghcr.io/professionalwiki/mediawiki-mcp-server:0.20.1@sha256:05f0c260e07289fa9953864c74fa000fc0f5d686872e6834d96d626fde301640}
     restart: unless-stopped
     entrypoint: ["/bin/sh", "/papaia/mcp-start.sh"]
     environment:

@@ -1,5 +1,5 @@
 name: paperless-connect
-version: 2.0.0
+version: 2.0.1
 addon_repo: papaia-addon-paperless-connect
 requires:
   # Contract generation this addon is built against; checked against the
@@ -21,7 +21,7 @@ components:
     role: primary
     kind: fidonis
     image_var: PAPERLESS_MCP_IMAGE
-    version: "0.1.1"
+    version: "0.1.2"
     source: https://github.com/Fidonis/paperless-mcp-rbac
 
 networks:

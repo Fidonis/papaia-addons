@@ -1,5 +1,5 @@
 name: paperless
-version: 2.0.0
+version: 2.1.0
 addon_repo: papaia-addon-paperless
 requires:
   # Contract generations this add-on is built against; checked against the
@@ -26,21 +26,21 @@ components:
     role: primary
     kind: upstream
     image_var: PAPERLESS_IMAGE
-    version: "3.0.5"
+    version: "3.4.2"
     source: https://github.com/paperless-ngx/paperless-ngx
   - id: paperless-mcp-rbac
     name: paperless-mcp-rbac
     role: primary
     kind: fidonis
     image_var: PAPERLESS_MCP_IMAGE
-    version: "0.2.0-rc.1"
+    version: "0.2.0-rc.2"
     source: https://github.com/Fidonis/paperless-mcp-rbac
   - id: nginx
     name: nginx
     role: sidecar
     kind: upstream
     image_var: PAPERLESS_GATE_IMAGE
-    version: "1.31.2-alpine"
+    version: "1.31.10-alpine"
     source: https://nginx.org
   - id: valkey
     name: Valkey
@@ -61,14 +61,14 @@ components:
     role: sidecar
     kind: upstream
     image_var: PAPERLESS_GOTENBERG_IMAGE
-    version: "8.34.0"
+    version: "8.40.0"
     source: https://github.com/gotenberg/gotenberg
   - id: tika
     name: Apache Tika
     role: sidecar
     kind: upstream
     image_var: PAPERLESS_TIKA_IMAGE
-    version: "3.2.3.0"
+    version: "3.3.3.1"
     source: https://tika.apache.org
 
 networks:

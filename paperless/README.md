@@ -40,13 +40,13 @@ variable in `<papaia-config>/addons/paperless/.env` to run another one.
 <!-- components:start -->
 | Component | Version | Role | Image variable |
 |---|---|---|---|
-| [Paperless-ngx](https://github.com/paperless-ngx/paperless-ngx) | `3.0.5` | primary | `PAPERLESS_IMAGE` |
-| [paperless-mcp-rbac](https://github.com/Fidonis/paperless-mcp-rbac) | `0.2.0-rc.1` | primary | `PAPERLESS_MCP_IMAGE` |
-| [nginx](https://nginx.org) | `1.31.2-alpine` | sidecar | `PAPERLESS_GATE_IMAGE` |
+| [Paperless-ngx](https://github.com/paperless-ngx/paperless-ngx) | `3.4.2` | primary | `PAPERLESS_IMAGE` |
+| [paperless-mcp-rbac](https://github.com/Fidonis/paperless-mcp-rbac) | `0.2.0-rc.2` | primary | `PAPERLESS_MCP_IMAGE` |
+| [nginx](https://nginx.org) | `1.31.10-alpine` | sidecar | `PAPERLESS_GATE_IMAGE` |
 | [Valkey](https://github.com/valkey-io/valkey) | `9.2.0-alpine` | sidecar | `PAPERLESS_REDIS_IMAGE` |
 | [PostgreSQL](https://www.postgresql.org) | `18.7` | sidecar | `PAPERLESS_DB_IMAGE` |
-| [Gotenberg](https://github.com/gotenberg/gotenberg) | `8.34.0` | sidecar | `PAPERLESS_GOTENBERG_IMAGE` |
-| [Apache Tika](https://tika.apache.org) | `3.2.3.0` | sidecar | `PAPERLESS_TIKA_IMAGE` |
+| [Gotenberg](https://github.com/gotenberg/gotenberg) | `8.40.0` | sidecar | `PAPERLESS_GOTENBERG_IMAGE` |
+| [Apache Tika](https://tika.apache.org) | `3.3.3.1` | sidecar | `PAPERLESS_TIKA_IMAGE` |
 <!-- components:end -->
 
 ---
@@ -310,7 +310,7 @@ list and creates the proxy host) and paperless-mcp-rbac 0.2.0 or newer (it sends
 0.1.1 sends none, and the gate refuses every call).
 
 **Before the 0.2.0 release of paperless-mcp-rbac.** Until it is published, the
-default of `PAPERLESS_MCP_IMAGE` is its signed release candidate `0.2.0-rc.1` from a
+default of `PAPERLESS_MCP_IMAGE` is its signed release candidate `0.2.0-rc.2` from a
 local test registry (`127.0.0.1:57500/unpublished/`), pinned by digest. Hosts
 without that registry set `PAPERLESS_MCP_IMAGE` to an image they can pull.
 `python3 tools/image_refs.py release` refuses any test registry image and any

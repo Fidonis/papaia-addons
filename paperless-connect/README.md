@@ -32,8 +32,16 @@ variable in `<papaia-config>/addons/paperless-connect/.env` to run another one.
 <!-- components:start -->
 | Component | Version | Role | Image variable |
 |---|---|---|---|
-| [paperless-mcp-rbac](https://github.com/Fidonis/paperless-mcp-rbac) | `0.1.1` | primary | `PAPERLESS_MCP_IMAGE` |
+| [paperless-mcp-rbac](https://github.com/Fidonis/paperless-mcp-rbac) | `0.1.2` | primary | `PAPERLESS_MCP_IMAGE` |
 <!-- components:end -->
+
+**Before the 0.1.2 release of paperless-mcp-rbac.** Until it is published, the default of
+`PAPERLESS_MCP_IMAGE` is its signed release candidate `0.1.2` from a local test registry
+(`127.0.0.1:57500/unpublished/`), pinned by digest; it carries the security
+fixes of this version. Hosts without that registry set `PAPERLESS_MCP_IMAGE` to an
+image they can pull. `python3 tools/image_refs.py release` refuses any test
+registry image, so the published `ghcr.io/fidonis/paperless-mcp-rbac:0.1.2@sha256:<digest>`
+replaces the candidate before this add-on is released.
 
 ---
 

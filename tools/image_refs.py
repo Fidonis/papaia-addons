@@ -8,7 +8,14 @@ Each `${VAR:-ref}` default in an add-on's `docker-compose.yml` must read
   `3.0.5`, or major.minor such as `18.7` only for an upstream without patch
   levels) and no moving name such as `latest`, `dev`, `main` or `nightly`;
 * the digest is the sha256 of the image index the tag pointed to when it was
-  pinned, so a re-pushed tag cannot change what an installation pulls.
+  pinned, so a re-pushed tag cannot change what an installation pulls;
+* an image that several add-ons use (tika in paperless and qdrant-ingest,
+  qdrant-mcp-rbac in qdrant and qdrant-connect) is pinned to the same
+  reference in each of them, so one scan and one upgrade cover all of them.
+  Images are matched by name (the last path segment), so a release candidate
+  from a test registry and the published image of the same name count as
+  one. `SEPARATE_LINES` names the images whose add-ons stay on different
+  release lines on purpose.
 
 The tag stays next to the digest because people and tools read the version
 from it (`components.py`, the README tables, papaia-manager); the digest is
@@ -46,6 +53,14 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # Add-ons outside the delivered set; their directories are not read here.
 EXCLUDED = {
     "n8n": "not part of the integrated delivery; maintained outside this check",
+}
+
+# Images that add-ons pin on different release lines on purpose, with the reason.
+SEPARATE_LINES = {
+    "paperless-mcp-rbac": (
+        "paperless needs the 0.2 line, which sends the gate header of its loopback "
+        "gate; paperless-connect keeps the 0.1 line until it moves to that gate"
+    ),
 }
 
 DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
@@ -135,6 +150,30 @@ def check_addon(path: Path, release: bool = False) -> list[str]:
     return problems
 
 
+def image_name(ref: str) -> str:
+    """Last path segment of the repository: `127.0.0.1:57500/unpublished/x:1@d` -> `x`."""
+    return components.image_repository(ref).rsplit("/", 1)[-1]
+
+
+def shared_pin_problems(addons: list[Path]) -> list[str]:
+    """One problem per image name that add-ons pin to more than one reference."""
+    uses: dict[str, dict[str, set[str]]] = {}
+    for path in addons:
+        compose = path / components.COMPOSE
+        if not compose.is_file():
+            continue
+        images, _ = components.read_compose_images(compose.read_text(encoding="utf-8"))
+        for ref in images.values():
+            uses.setdefault(image_name(ref), {}).setdefault(ref, set()).add(path.name)
+    problems = []
+    for name, refs in sorted(uses.items()):
+        if len(refs) < 2 or name in SEPARATE_LINES:
+            continue
+        where = "; ".join(f"{', '.join(sorted(owners))}: {ref}" for ref, owners in sorted(refs.items()))
+        problems.append(f"image `{name}` is pinned differently ({where}); pin one reference everywhere")
+    return problems
+
+
 def pinned_refs(addons: list[Path]) -> set[str]:
     refs: set[str] = set()
     for path in addons:
@@ -162,6 +201,9 @@ def main(argv: list[str] | None = None) -> int:
         for problem in check_addon(path, release=args.command == "release"):
             print(f"{path.name}: {problem}", file=sys.stderr)
             failed = True
+    for problem in shared_pin_problems(addons):
+        print(problem, file=sys.stderr)
+        failed = True
     refs = pinned_refs(addons)
     candidates = sorted(ref for ref in refs if is_test_registry(ref))
     if args.command == "list":

@@ -7,6 +7,7 @@ import copy
 import datetime
 import io
 import json
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -18,6 +19,9 @@ SEEDED = HERE / "fixtures" / "scan" / "seeded-critical.json"
 REPO_EXCEPTIONS = HERE.parent / "security" / "exceptions.yaml"
 TODAY = "2026-11-21"
 IMAGE = "ghcr.io/fidonis/papaia-mediawiki"
+PENDING_APPROVAL = re.compile(r"^pending \([^()<>]+\)$", re.IGNORECASE)
+# A role (optionally with name or date), not the `<role that countersigned>` placeholder.
+COUNTERSIGNED = re.compile(r"^[A-Za-z][^<>]*$")
 
 
 def vuln(
@@ -62,6 +66,34 @@ def entry(**overrides: object) -> dict:
     }
     base.update(overrides)
     return base
+
+
+def review_problems(raw: dict) -> list[str]:
+    """Problems with the review state of one raw exception entry.
+
+    An entry is either waiting for the countersignature (`pending (<who signs>)`,
+    which the gate lists without waiving anything) or names the role that
+    countersigned it. Both are valid states of the file; an empty approval or the
+    template placeholder is not. Every entry expires at most MAX_DAYS after it
+    was added.
+    """
+    problems = []
+    approval = raw.get("approved_by")
+    if not isinstance(approval, str) or not approval.strip():
+        problems.append("approved_by is empty")
+    elif approval.strip().lower().startswith("pending"):
+        if not PENDING_APPROVAL.match(approval.strip()):
+            problems.append("a pending approval names who countersigns: `pending (<role>)`")
+    elif not COUNTERSIGNED.match(approval.strip()):
+        problems.append("approved_by does not name the countersigning role")
+    added, expires = raw.get("added"), raw.get("expires")
+    if not isinstance(added, datetime.date) or not isinstance(expires, datetime.date):
+        problems.append("added and expires are dates")
+    elif expires < added:
+        problems.append("expires before it was added")
+    elif (expires - added).days > scan_gate.MAX_DAYS:
+        problems.append(f"valid for more than {scan_gate.MAX_DAYS} days")
+    return problems
 
 
 class GateCase(unittest.TestCase):
@@ -240,10 +272,122 @@ class ExceptionTest(GateCase):
         )
         self.assertEqual(code, 0)
 
+    def test_approved_exception_for_a_finding_without_fix_is_used(self) -> None:
+        code, out, _ = self.run_gate(
+            self.write_report(report(vuln(fixed=None))), self.write_exceptions([entry()])
+        )
+        self.assertEqual(code, 0)
+        self.assertNotIn("unused", out)
+        self.assertIn("CVE-2099-1000", out)
+
+    def test_pending_exception_for_a_finding_without_fix_waives_nothing_and_passes(self) -> None:
+        code, out, _ = self.run_gate(
+            self.write_report(report(vuln(fixed=None))),
+            self.write_exceptions([entry(approved_by="pending (security officer countersignature)")]),
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("pending approval", out)
+
     def test_unused_exception_is_reported_without_failing(self) -> None:
         code, out, _ = self.run_gate(self.write_report(report()), self.write_exceptions([entry()]))
         self.assertEqual(code, 0)
         self.assertIn("unused", out)
+
+
+class PinnedImageTest(GateCase):
+    """Every exception names an image that an add-on default still pins."""
+
+    def test_entry_for_an_image_no_addon_pins_is_reported(self) -> None:
+        entries = scan_gate.load_exceptions(
+            self.write_exceptions([entry(), entry(image="docker.io/library/gone")])
+        )
+        stale = scan_gate.unpinned_entries(entries, {IMAGE})
+        self.assertEqual([item.image for item in stale], ["docker.io/library/gone"])
+
+    def test_entries_for_pinned_images_and_the_tool_set_pass(self) -> None:
+        entries = scan_gate.load_exceptions(
+            self.write_exceptions([entry(), entry(image=scan_gate.TOOL_SET)])
+        )
+        self.assertEqual(scan_gate.unpinned_entries(entries, {IMAGE}), [])
+
+    def test_pinned_repositories_follow_the_compose_defaults(self) -> None:
+        root = self.tmp / "repo"
+        addon = root / "demo"
+        addon.mkdir(parents=True)
+        (addon / "papaia-app.yaml").write_text("name: demo\nversion: 1.0.0\n", encoding="utf-8")
+        (addon / "docker-compose.yml").write_text(
+            "services:\n  app:\n    image: ${APP_IMAGE:-docker.io/library/postgres:18.7@sha256:"
+            + "a" * 64
+            + "}\n  mcp:\n    image: ${MCP_IMAGE:-127.0.0.1:57500/unpublished/qdrant-mcp-rbac:0.3.1@sha256:"
+            + "b" * 64
+            + "}\n",
+            encoding="utf-8",
+        )
+        self.assertEqual(
+            scan_gate.pinned_repositories(root),
+            {"docker.io/library/postgres", "ghcr.io/fidonis/qdrant-mcp-rbac"},
+        )
+
+    def test_candidate_report_is_matched_by_the_published_repository(self) -> None:
+        candidate = "127.0.0.1:57500/unpublished/qdrant-mcp-rbac:0.3.1@sha256:" + "b" * 64
+        code, out, _ = self.run_gate(
+            self.write_report(report(vuln(), artifact=candidate)),
+            self.write_exceptions([entry(image="ghcr.io/fidonis/qdrant-mcp-rbac")]),
+        )
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("unused", out)
+
+    def test_candidate_report_without_entry_fails(self) -> None:
+        candidate = "127.0.0.1:57500/unpublished/qdrant-mcp-rbac:0.3.1@sha256:" + "b" * 64
+        code, _, _ = self.run_gate(self.write_report(report(vuln(), artifact=candidate)))
+        self.assertEqual(code, 1)
+
+    def test_entry_naming_the_test_registry_is_rejected(self) -> None:
+        path = self.write_exceptions([entry(image="127.0.0.1:57500/unpublished/qdrant-mcp-rbac")])
+        code, _, err = self.run_gate(self.write_report(report()), path)
+        self.assertEqual(code, 2)
+        self.assertIn("ghcr.io/fidonis/qdrant-mcp-rbac", err)
+
+    def test_repository_exceptions_name_only_pinned_images(self) -> None:
+        entries = scan_gate.load_exceptions(REPO_EXCEPTIONS)
+        stale = scan_gate.unpinned_entries(entries, scan_gate.pinned_repositories(HERE.parent))
+        self.assertEqual([f"{e.image} {e.vuln_id} {e.package}" for e in stale], [])
+
+    def test_repository_exceptions_carry_a_review_state_and_expire_in_time(self) -> None:
+        import yaml
+
+        data = yaml.safe_load(REPO_EXCEPTIONS.read_text(encoding="utf-8"))
+        for raw in data["exceptions"] or []:
+            with self.subTest(id=raw["id"], package=raw["package"], image=raw["image"]):
+                self.assertEqual(review_problems(raw), [])
+
+    def test_review_check_accepts_pending_and_countersigned_entries(self) -> None:
+        base = {"added": datetime.date(2026, 11, 24), "expires": datetime.date(2027, 2, 22)}
+        for approval in (
+            "pending (security officer countersignature)",
+            "security officer",
+            "Security officer, 2026-11-30",
+        ):
+            with self.subTest(approval=approval):
+                self.assertEqual(review_problems({**base, "approved_by": approval}), [])
+
+    def test_review_check_rejects_missing_approval_placeholders_and_long_validity(self) -> None:
+        base = {"added": datetime.date(2026, 11, 24), "expires": datetime.date(2027, 2, 22)}
+        cases = {
+            "empty": {**base, "approved_by": "  "},
+            "not text": {**base, "approved_by": None},
+            "pending without approver": {**base, "approved_by": "pending"},
+            "template placeholder": {**base, "approved_by": "<role that countersigned>"},
+            "too long": {**base, "approved_by": "security officer", "expires": datetime.date(2027, 2, 23)},
+            "expires before added": {
+                **base,
+                "approved_by": "security officer",
+                "expires": datetime.date(2026, 11, 23),
+            },
+        }
+        for name, raw in cases.items():
+            with self.subTest(case=name):
+                self.assertNotEqual(review_problems(raw), [])
 
 
 class ExceptionFileValidationTest(GateCase):
@@ -267,6 +411,26 @@ class ExceptionFileValidationTest(GateCase):
         broken = entry()
         del broken["approved_by"]
         self.assert_rejected(self.write_exceptions([broken]))
+
+    def test_more_entries_than_the_limit_are_rejected(self) -> None:
+        entries = [entry(id=f"CVE-2099-{n:05d}") for n in range(scan_gate.MAX_ENTRIES + 1)]
+        self.assertIn("at most", self.assert_rejected(self.write_exceptions(entries)))
+
+    def test_a_file_above_the_size_limit_is_rejected(self) -> None:
+        path = self.write_exceptions([entry()])
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write("#" * scan_gate.MAX_EXCEPTIONS_BYTES + "\n")
+        self.assertIn("larger than", self.assert_rejected(path))
+
+    def test_limits_hold_one_entry_per_remaining_finding_of_every_pinned_image(self) -> None:
+        # Each remaining CRITICAL or HIGH finding of each pinned image has its
+        # own entry; the limits leave room for that, but stay bounded.
+        size = REPO_EXCEPTIONS.stat().st_size
+        count = len(scan_gate.load_exceptions(REPO_EXCEPTIONS))
+        self.assertLessEqual(count * 2, scan_gate.MAX_ENTRIES)
+        self.assertLessEqual(size * 2, scan_gate.MAX_EXCEPTIONS_BYTES)
+        self.assertLessEqual(scan_gate.MAX_ENTRIES, 5000)
+        self.assertLessEqual(scan_gate.MAX_EXCEPTIONS_BYTES, 4 * 1024 * 1024)
 
     def test_short_reason_is_rejected(self) -> None:
         self.assert_rejected(self.write_exceptions([entry(reason="no fix yet")]))

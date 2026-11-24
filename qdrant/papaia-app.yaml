@@ -1,5 +1,5 @@
 name: qdrant
-version: 2.0.0
+version: 2.1.0
 addon_repo: papaia-addon-qdrant
 requires:
   # Contract generation this addon is built against; checked against the
@@ -21,14 +21,14 @@ components:
     role: primary
     kind: upstream
     image_var: QDRANT_IMAGE
-    version: "v1.19.0"
+    version: "v1.20.2"
     source: https://github.com/qdrant/qdrant
   - id: qdrant-mcp-rbac
     name: qdrant-mcp-rbac
     role: primary
     kind: fidonis
     image_var: QDRANT_MCP_IMAGE
-    version: "0.3.0"
+    version: "0.3.1"
     source: https://github.com/Fidonis/qdrant-mcp-rbac
 
 networks:

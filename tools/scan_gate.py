@@ -9,11 +9,14 @@ repository's exception list `security/exceptions.yaml`, and decides:
 * An exception may cover a CRITICAL finding as well; without one it fails.
 * Findings without a fix are listed and do not fail: they cannot be acted on
   until the distribution ships a fix, and the nightly scan picks the fix up.
+  Each of them still gets an entry in the exception list with its reason;
+  such an entry counts as used while the finding is present.
 * An expired exception fails the run whether or not it still matches.
 
 An exception covers a finding when `id`, `package`, `severity` and `image`
-(the repository, without tag or digest; for a scan of the CI tool set the
-scanned path, `tools/ci`) are equal, and only once it is approved: an entry
+(the repository, without tag or digest; for a release candidate from a local
+test registry the repository it is published to; for a scan of the CI tool
+set the scanned path, `tools/ci`) are equal, and only once it is approved: an entry
 whose `approved_by` starts with `pending` is listed but waives nothing. Each entry carries a
 reason, the date it was added and an expiry at most 90 days later; see
 `security/exceptions.yaml` for the format.
@@ -37,14 +40,24 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_EXCEPTIONS = REPO_ROOT / "security" / "exceptions.yaml"
+# The scan of the CI tool set reports this path as its artifact.
+TOOL_SET = "tools/ci"
+# A release candidate in a local test registry (`127.0.0.1:<port>/unpublished/<name>`)
+# is published as `<PUBLISHED_NAMESPACE>/<name>`; exceptions name the published
+# repository, so they hold for the candidate and the release alike.
+PUBLISHED_NAMESPACE = "ghcr.io/fidonis"
+CANDIDATE = re.compile(
+    r"^(?:localhost|127(?:\.[0-9]{1,3}){3})(?::[0-9]{1,5})?/unpublished/([a-z0-9]+(?:[._-][a-z0-9]+)*)$"
+)
 
 SEVERITIES = ("CRITICAL", "HIGH", "MEDIUM", "LOW", "UNKNOWN")
 EXCEPTABLE = ("CRITICAL", "HIGH")
 MAX_DAYS = 90
 MIN_REASON = 20
 MAX_REPORT_BYTES = 256 * 1024 * 1024
-MAX_EXCEPTIONS_BYTES = 256 * 1024
-MAX_ENTRIES = 500
+# One entry per remaining CRITICAL or HIGH finding of every pinned image.
+MAX_EXCEPTIONS_BYTES = 2 * 1024 * 1024
+MAX_ENTRIES = 4000
 ENTRY_FIELDS = ("id", "package", "image", "severity", "reason", "added", "expires", "approved_by")
 TOP_FIELDS = ("version", "exceptions")
 VULN_ID = re.compile(r"^[A-Za-z][A-Za-z0-9]*-[A-Za-z0-9._:-]{1,80}$")
@@ -95,6 +108,12 @@ def repository(artifact: str) -> str:
     if ":" in last:
         last = last.split(":", 1)[0]
     return f"{head}/{last}" if head else last
+
+
+def exception_image(repo: str) -> str:
+    """The repository an exception names for `repo`: the published one for a candidate."""
+    match = CANDIDATE.match(repo)
+    return f"{PUBLISHED_NAMESPACE}/{match.group(1)}" if match else repo
 
 
 def _text(value: Any, where: str, *, required: bool = True, limit: int = 1024) -> str:
@@ -195,6 +214,11 @@ def load_exceptions(path: Path) -> list[Entry]:
         image = _text(raw["image"], f"{where}.image", limit=255)
         if not IMAGE.match(image):
             raise GateError(f"{where}.image: expected a repository without tag or digest")
+        if CANDIDATE.match(image):
+            raise GateError(
+                f"{where}.image: name the published repository {exception_image(image)}, "
+                "not the test registry"
+            )
         severity = _text(raw["severity"], f"{where}.severity", limit=16)
         if severity not in EXCEPTABLE:
             raise GateError(f"{where}.severity: one of {', '.join(EXCEPTABLE)}")
@@ -217,6 +241,19 @@ def load_exceptions(path: Path) -> list[Entry]:
     return loaded
 
 
+def pinned_repositories(root: Path) -> set[str]:
+    """Repositories of the image defaults of the delivered add-ons under `root`."""
+    import image_refs
+
+    refs = image_refs.pinned_refs(image_refs.checked_addons(root))
+    return {exception_image(repository(ref)) for ref in refs}
+
+
+def unpinned_entries(entries: list[Entry], pinned: set[str]) -> list[Entry]:
+    """Entries naming an image that no add-on default pins (nor the CI tool set)."""
+    return [e for e in entries if e.image != TOOL_SET and e.image not in pinned]
+
+
 @dataclasses.dataclass
 class Verdict:
     failing: list[Finding]
@@ -235,7 +272,7 @@ class Verdict:
 def evaluate(
     artifact: str, findings: list[Finding], exceptions: list[Entry], today: datetime.date
 ) -> Verdict:
-    image = repository(artifact)
+    image = exception_image(repository(artifact))
     current = [e for e in exceptions if e.expires >= today]
     valid = {e.key(): e for e in current if e.approved}
     waiting = {e.key(): e for e in current if not e.approved}
@@ -247,10 +284,12 @@ def evaluate(
     for finding in findings:
         if finding.severity not in EXCEPTABLE:
             continue
+        key = (image, finding.vuln_id, finding.package, finding.severity)
         if not finding.fixable:
             unfixed.append(finding)
+            if key in valid:
+                used.add(key)
             continue
-        key = (image, finding.vuln_id, finding.package, finding.severity)
         if key in valid:
             used.add(key)
             excepted.append(finding)

@@ -145,6 +145,67 @@ class ListTest(ComposeCheckTest):
         self.assertEqual((code, json.loads(out)), (0, []))
 
 
+class SharedPinTest(ComposeCheckTest):
+    """One image is pinned to the same tag and digest in every add-on that uses it."""
+
+    OTHER = "fedcba9876543210" * 4
+
+    def test_same_image_with_the_same_pin_passes(self) -> None:
+        tika = f"docker.io/apache/tika:3.2.3.0@{DIGEST}"
+        self.addon("paperless", compose(tika))
+        self.addon("qdrant-ingest", compose(tika))
+        self.assertEqual(self.run_check(), (0, ""))
+
+    def test_same_image_with_another_tag_fails_and_names_both_addons(self) -> None:
+        self.addon("paperless", compose(f"docker.io/apache/tika:3.2.3.0@{DIGEST}"))
+        self.addon("qdrant-ingest", compose(f"docker.io/apache/tika:3.2.2.0@{DIGEST}"))
+        code, err = self.run_check()
+        self.assertEqual(code, 1)
+        self.assertIn("docker.io/apache/tika", err)
+        self.assertIn("paperless", err)
+        self.assertIn("qdrant-ingest", err)
+
+    def test_same_tag_with_another_digest_fails(self) -> None:
+        self.addon("qdrant", compose(f"ghcr.io/fidonis/qdrant-mcp-rbac:0.3.1@{DIGEST}"))
+        self.addon(
+            "qdrant-connect", compose(f"ghcr.io/fidonis/qdrant-mcp-rbac:0.3.1@sha256:{self.OTHER}")
+        )
+        code, err = self.run_check()
+        self.assertEqual(code, 1)
+        self.assertIn("qdrant-mcp-rbac", err)
+
+    def test_candidate_and_published_image_of_one_name_fail(self) -> None:
+        self.addon(
+            "qdrant", compose(f"127.0.0.1:57500/unpublished/qdrant-mcp-rbac:0.3.1@{DIGEST}")
+        )
+        self.addon("qdrant-connect", compose(f"ghcr.io/fidonis/qdrant-mcp-rbac:0.3.0@{DIGEST}"))
+        code, err = self.run_check()
+        self.assertEqual(code, 1)
+        self.assertIn("qdrant-mcp-rbac", err)
+
+    def test_two_services_of_one_addon_count_once(self) -> None:
+        nginx = f"docker.io/library/nginx:1.31.10-alpine@{DIGEST}"
+        self.addon("demo", compose(nginx, nginx))
+        self.assertEqual(self.run_check(), (0, ""))
+
+    def test_images_of_another_name_are_independent(self) -> None:
+        self.addon("one", compose(f"docker.io/library/postgres:18.7@{DIGEST}"))
+        self.addon("two", compose(f"docker.io/library/mariadb:11.8.9@{DIGEST}"))
+        self.assertEqual(self.run_check(), (0, ""))
+
+    def test_declared_separate_lines_may_differ(self) -> None:
+        name = next(iter(image_refs.SEPARATE_LINES))
+        self.addon("one", compose(f"ghcr.io/fidonis/{name}:0.1.2@{DIGEST}"))
+        self.addon("two", compose(f"127.0.0.1:57500/unpublished/{name}:0.2.0-rc.2@{DIGEST}"))
+        self.assertEqual(self.run_check(), (0, ""))
+
+    def test_separate_lines_name_their_reason(self) -> None:
+        for name, reason in image_refs.SEPARATE_LINES.items():
+            with self.subTest(name=name):
+                self.assertRegex(name, r"^[a-z0-9][a-z0-9._-]*$")
+                self.assertGreaterEqual(len(reason), 20)
+
+
 class ReleaseRuleTest(unittest.TestCase):
     def test_published_references_pass(self) -> None:
         for ref in (
@@ -242,6 +303,15 @@ class RepositoryTest(unittest.TestCase):
             {"mediawiki", "paperless", "paperless-connect", "qdrant", "qdrant-connect", "qdrant-ingest"},
             names,
         )
+
+    def test_shared_images_are_pinned_alike_across_addons(self) -> None:
+        self.assertEqual(image_refs.shared_pin_problems(image_refs.checked_addons(REPO_ROOT)), [])
+        pins: dict[str, dict[str, str]] = {}
+        for addon in ("paperless", "qdrant-ingest", "qdrant", "qdrant-connect"):
+            text = (REPO_ROOT / addon / "docker-compose.yml").read_text(encoding="utf-8")
+            pins[addon], _ = image_refs.components.read_compose_images(text)
+        self.assertEqual(pins["paperless"]["PAPERLESS_TIKA_IMAGE"], pins["qdrant-ingest"]["QI_TIKA_IMAGE"])
+        self.assertEqual(pins["qdrant"]["QDRANT_MCP_IMAGE"], pins["qdrant-connect"]["QDRANT_MCP_IMAGE"])
 
     def test_paperless_mcp_default_is_a_signed_candidate_or_a_release(self) -> None:
         compose_text = (REPO_ROOT / "paperless" / "docker-compose.yml").read_text(encoding="utf-8")

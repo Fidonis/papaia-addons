@@ -7,7 +7,9 @@ name: mediawiki image
 #   default in docker-compose.yml to a published tag and its digest
 #   (`$IMAGE:<tag>@sha256:<digest>`, the digest the registry serves). A new
 #   tag cannot be pinned before it exists, so the default may name the
-#   previous tag only while the new one is not published yet.
+#   previous tag only while the new one is not published yet. On a milestone
+#   the default may instead name the signed candidate of the new tag from a
+#   local test registry; main and pull requests into it refuse that.
 # - test (pull requests and pushes): builds linux/amd64 and linux/arm64 and
 #   scans each build with Trivy; tools/scan_gate.py fails on CRITICAL or HIGH
 #   findings with a fix (exceptions: security/exceptions.yaml). The
@@ -82,7 +84,7 @@ jobs:
         id: tag
         run: |
           set -euo pipefail
-          mw="$(sed -n 's#^FROM docker.io/library/mediawiki:\([0-9.]*\)$#\1#p' mediawiki/image/Dockerfile)"
+          mw="$(sed -n 's#^FROM docker.io/library/mediawiki:\([0-9.]*\)@sha256:[0-9a-f]\{64\}$#\1#p' mediawiki/image/Dockerfile)"
           addon="$(sed -n 's/^version: *//p' mediawiki/papaia-app.yaml)"
           kit="$(python3 -c 'import tomllib; print(tomllib.load(open("kit.lock", "rb"))["version"])')"
           [[ -n "$mw" && -n "$addon" && -n "$kit" ]] || { echo "::error::cannot read the MediaWiki, add-on or kit version"; exit 1; }
@@ -92,9 +94,28 @@ jobs:
         id: pin
         env:
           TAG: ${{ steps.tag.outputs.tag }}
+          RELEASE_LINE: ${{ github.ref == 'refs/heads/main' || github.base_ref == 'main' }}
         run: |
           set -euo pipefail
           default="$(sed -n 's#^ *image: ${MEDIAWIKI_IMAGE:-\([^}]*\)}$#\1#p' mediawiki/docker-compose.yml)"
+          # While a milestone is open, the default may name the signed release
+          # candidate of exactly this tag in a local test registry (see
+          # tools/image_refs.py). A runner cannot reach that registry, so only
+          # the form and the tag are checked here; main and pull requests into
+          # it refuse it.
+          candidate='^127\.0\.0\.1:[0-9]{1,5}/unpublished/papaia-mediawiki:([A-Za-z0-9._-]+)@(sha256:[0-9a-f]{64})$'
+          if [[ "$default" =~ $candidate ]]; then
+            if [[ "$RELEASE_LINE" == "true" ]]; then
+              echo "::error file=mediawiki/docker-compose.yml::MEDIAWIKI_IMAGE default names a test registry candidate ($default); pin the published $IMAGE:$TAG on the release line"
+              exit 1
+            fi
+            if [[ "${BASH_REMATCH[1]}" != "$TAG" ]]; then
+              echo "::error file=mediawiki/docker-compose.yml::the candidate default is tag ${BASH_REMATCH[1]}, the Dockerfile and manifest give $TAG"
+              exit 1
+            fi
+            echo "::notice::MEDIAWIKI_IMAGE default is the test registry candidate of $TAG; pin $IMAGE:$TAG with its digest once published"
+            exit 0
+          fi
           if [[ ! "$default" =~ ^${IMAGE//./\\.}:([A-Za-z0-9._-]+)@(sha256:[0-9a-f]{64})$ ]]; then
             echo "::error file=mediawiki/docker-compose.yml::MEDIAWIKI_IMAGE default must be $IMAGE:<tag>@sha256:<digest>, found '$default'"
             exit 1

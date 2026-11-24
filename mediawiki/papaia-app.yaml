@@ -1,5 +1,5 @@
 name: mediawiki
-version: 1.0.0
+version: 1.0.1
 addon_repo: papaia-addon-mediawiki
 requires:
   # Contract generation this addon is built against; checked against the
@@ -21,14 +21,14 @@ components:
     role: primary
     kind: fidonis
     image_var: MEDIAWIKI_IMAGE
-    version: "1.43.11-1.0.0"
+    version: "1.43.11-1.0.1"
     source: https://github.com/Fidonis/papaia-addons/tree/main/mediawiki/image
   - id: mediawiki-mcp-server
     name: MediaWiki MCP Server
     role: primary
     kind: upstream
     image_var: MEDIAWIKI_MCP_IMAGE
-    version: "0.20.0"
+    version: "0.20.1"
     source: https://github.com/ProfessionalWiki/MediaWiki-MCP-Server
   - id: mariadb
     name: MariaDB

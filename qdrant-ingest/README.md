@@ -77,9 +77,17 @@ variable in `<papaia-config>/addons/qdrant-ingest/.env` to run another one.
 <!-- components:start -->
 | Component | Version | Role | Image variable |
 |---|---|---|---|
-| [qdrant-ingest](https://github.com/Fidonis/qdrant-ingest) | `0.3.0` | primary | `QI_INGEST_IMAGE` |
-| [Apache Tika](https://tika.apache.org) | `3.2.3.0` | sidecar | `QI_TIKA_IMAGE` |
+| [qdrant-ingest](https://github.com/Fidonis/qdrant-ingest) | `0.3.1` | primary | `QI_INGEST_IMAGE` |
+| [Apache Tika](https://tika.apache.org) | `3.3.3.1` | sidecar | `QI_TIKA_IMAGE` |
 <!-- components:end -->
+
+**Before the 0.3.1 release of qdrant-ingest.** Until it is published, the default of
+`QI_INGEST_IMAGE` is its signed release candidate `0.3.1` from a local test registry
+(`127.0.0.1:57500/unpublished/`), pinned by digest; it carries the security
+fixes of this version. Hosts without that registry set `QI_INGEST_IMAGE` to an
+image they can pull. `python3 tools/image_refs.py release` refuses any test
+registry image, so the published `ghcr.io/fidonis/qdrant-ingest:0.3.1@sha256:<digest>`
+replaces the candidate before this add-on is released.
 
 ---
 

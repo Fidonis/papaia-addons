@@ -29,7 +29,7 @@ services:
   #  remove the mapping once ingestion runs inside the network.
   # ═══════════════════════════════════════════════════════════════════════════
   qdrant:
-    image: ${QDRANT_IMAGE:-docker.io/qdrant/qdrant:v1.19.0@sha256:057ee3a8da769fe7310dd3537b4dc7583bf87a95ce8ac43c0af5a46bc580d1fc}
+    image: ${QDRANT_IMAGE:-docker.io/qdrant/qdrant:v1.20.2@sha256:d277592721d2e3b73f9b797b53cf05e6a5bb2134f6d13fdbda4ca51782afbcac}
     restart: unless-stopped
     environment:
       QDRANT__SERVICE__API_KEY: ${QDRANT_JWT_SECRET}
@@ -57,7 +57,7 @@ services:
   #  validation reaches Keycloak at OIDC_ISSUER via extra_hosts.
   # ═══════════════════════════════════════════════════════════════════════════
   qdrant-mcp:
-    image: ${QDRANT_MCP_IMAGE:-ghcr.io/fidonis/qdrant-mcp-rbac:0.3.0@sha256:91268b178096087187bd325c777dbc8c840f021b4fa514646dc6f7fc43c231cf}
+    image: ${QDRANT_MCP_IMAGE:-127.0.0.1:57500/unpublished/qdrant-mcp-rbac:0.3.1@sha256:bdfa79c21989236e7a73ee2347855c6c1339fba0388c41dd3f551d0297b1a591}
     restart: unless-stopped
     environment:
       OIDC_ISSUER_URL:           ${OIDC_ISSUER}

@@ -5,6 +5,17 @@ file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.
 and the versions are the add-on's own `version` in `papaia-app.yaml`. Steps an
 operator has to do by hand are listed under `### Upgrade notes`.
 
+## [2.0.1] - 2026-11-24
+
+### Security
+- paperless-mcp-rbac 0.1.1 -> 0.1.2, a patch release of the same line on a
+  fixed base image; it removes every CRITICAL and HIGH finding with a fix of
+  0.1.1. Pinned by tag and digest; until 0.1.2 is published, the default is its
+  signed release candidate from a local test registry.
+
+### Upgrade notes
+- Nothing to do: configuration, environment and behaviour are unchanged.
+
 ## [2.0.0] - 2026-10-24
 
 ### Added

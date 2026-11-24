@@ -33,8 +33,16 @@ variable in `<papaia-config>/addons/qdrant-connect/.env` to run another one.
 <!-- components:start -->
 | Component | Version | Role | Image variable |
 |---|---|---|---|
-| [qdrant-mcp-rbac](https://github.com/Fidonis/qdrant-mcp-rbac) | `0.3.0` | primary | `QDRANT_MCP_IMAGE` |
+| [qdrant-mcp-rbac](https://github.com/Fidonis/qdrant-mcp-rbac) | `0.3.1` | primary | `QDRANT_MCP_IMAGE` |
 <!-- components:end -->
+
+**Before the 0.3.1 release of qdrant-mcp-rbac.** Until it is published, the default of
+`QDRANT_MCP_IMAGE` is its signed release candidate `0.3.1` from a local test registry
+(`127.0.0.1:57500/unpublished/`), pinned by digest; it carries the security
+fixes of this version. The add-on `qdrant` pins the same reference. Hosts without that registry set `QDRANT_MCP_IMAGE` to an
+image they can pull. `python3 tools/image_refs.py release` refuses any test
+registry image, so the published `ghcr.io/fidonis/qdrant-mcp-rbac:0.3.1@sha256:<digest>`
+replaces the candidate before this add-on is released.
 
 ---
 

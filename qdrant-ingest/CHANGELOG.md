@@ -5,6 +5,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the versions are the add-on's own `version` in `papaia-app.yaml`. Steps an
 operator has to do by hand are listed under `### Upgrade notes`.
 
+## [2.1.0] - 2026-11-24
+
+### Security
+- qdrant-ingest 0.3.0 -> 0.3.1, a patch release of the same line on a fixed
+  base image and dependency set; it removes every CRITICAL and HIGH finding with
+  a fix of 0.3.0. Pinned by tag and digest; until 0.3.1 is published, the
+  default is its signed release candidate from a local test registry.
+- Apache Tika 3.2.3.0 -> 3.3.3.1, the same reference as in the add-on
+  `paperless`. 3.2.3.0 is the newest 3.2 release and has 15 CRITICAL and HIGH
+  findings with a fix; 3.3.3.1 leaves 4 (cxf-core, jetty-http,
+  jetty-security, fixed only in other Jetty and CXF lines; see
+  `security/exceptions.yaml`).
+
+### Upgrade notes
+- Configuration and environment are unchanged; Tika keeps no data, so nothing
+  is migrated.
+
 ## [2.0.0] - 2026-10-24
 
 ### Added

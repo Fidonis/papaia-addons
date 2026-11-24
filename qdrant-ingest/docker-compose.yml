@@ -37,7 +37,7 @@ services:
   #  server refuses writes to its system collections.
   # ═══════════════════════════════════════════════════════════════════════════
   qdrant-ingest:
-    image: ${QI_INGEST_IMAGE:-ghcr.io/fidonis/qdrant-ingest:0.3.0@sha256:865d54bcd0cdb0e8c46c173fbb15699f475f9d9613c62e5f0fb2808f5deaebc9}
+    image: ${QI_INGEST_IMAGE:-127.0.0.1:57500/unpublished/qdrant-ingest:0.3.1@sha256:38acb6118b5af95ad365c59000c4119eccfc33fc86a7b0c9eca76b21dd57767e}
     restart: unless-stopped
     # Jobs stop cooperatively between documents; give them room to finish.
     stop_grace_period: 60s
@@ -187,7 +187,7 @@ services:
   #  wants a larger heap — see QI_TIKA_IMAGE in .env.example.
   # ═══════════════════════════════════════════════════════════════════════════
   qdrant-ingest-tika:
-    image: ${QI_TIKA_IMAGE:-docker.io/apache/tika:3.2.3.0@sha256:c0154cb95587cde64be74f35ada1a2bd7892219f3f0ac3c9dc6cab34046b3573}
+    image: ${QI_TIKA_IMAGE:-docker.io/apache/tika:3.3.3.1@sha256:3049611264bb18cf66e6629f59818cad75ea5d46f770c504ae46537949838c67}
     restart: unless-stopped
     environment:
       JAVA_OPTS: "-Xmx${QI_TIKA_HEAP:-2g}"

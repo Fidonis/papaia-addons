@@ -5,6 +5,27 @@ format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the versions are the add-on's own `version` in `papaia-app.yaml`. Steps an
 operator has to do by hand are listed under `### Upgrade notes`.
 
+## [2.1.0] - 2026-11-24
+
+### Security
+- Qdrant v1.19.0 -> v1.20.2. No v1.19 release removes the CRITICAL and HIGH
+  findings with a fix of v1.19.0 (v1.19.2, the newest patch, still has 16 of
+  them, 2 critical); v1.20.2 leaves one (zlib1g, see
+  `security/exceptions.yaml`).
+- qdrant-mcp-rbac 0.3.0 -> 0.3.1, a patch release of the same line on a fixed
+  base image and dependency set. Until 0.3.1 is published, the default is its
+  signed release candidate from a local test registry, the same reference as in
+  the add-on `qdrant-connect`.
+
+### Upgrade notes
+- Configuration and environment are unchanged, and the existing storage volume
+  is used as it is: Qdrant supports the upgrade from the previous minor version
+  in place. A downgrade to v1.19 is not supported, so take a snapshot before
+  the upgrade if a rollback must stay possible.
+- Qdrant upgrades one minor version at a time: an installation still on a
+  version older than v1.19 first moves to the previous add-on version.
+- Qdrant v1.20 writes log timestamps in the time zone of `TZ` (UTC when unset).
+
 ## [2.0.0] - 2026-10-24
 
 ### Added

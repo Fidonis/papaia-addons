@@ -18,7 +18,7 @@ name: mediawiki image
 #   which under emulation would take most of the job's time). A seeded
 #   critical report must fail the same gate, so a broken gate cannot pass
 #   silently.
-# - publish (main and releases/** only): pushes the build by digest, without
+# - publish (main and releases/** except *-prepare): pushes the build by digest, without
 #   a tag. It scans and gates the manifest of each platform, attaches one
 #   CycloneDX SBOM per platform as a signed attestation (to the platform
 #   manifest and to the index), signs the index and its manifests with the
@@ -243,9 +243,12 @@ jobs:
     needs: [check, test]
     # Only main and the milestone branches publish, also on a manual run: a
     # run on any other branch must not claim a tag before its code is merged.
+    # A releases/<version>-prepare branch is a staging copy of a milestone
+    # before its release and never publishes.
     if: >-
       github.event_name != 'pull_request'
       && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/releases/'))
+      && !endsWith(github.ref, '-prepare')
     runs-on: ubuntu-latest
     timeout-minutes: 60
     # One publish per tag: a push to releases/x.y.z and the merge of that

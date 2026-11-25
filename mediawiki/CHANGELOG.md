@@ -5,6 +5,25 @@ format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the versions are the add-on's own `version` in `papaia-app.yaml`. Steps an
 operator has to do by hand are listed under `### Upgrade notes`.
 
+## [1.0.2] - 2026-11-25
+
+### Security
+- The wiki image `1.43.11-1.0.2` is rebuilt on the current digest of
+  MediaWiki 1.43.11 (Debian 13.8, rebuilt upstream on 2026-11-24), which
+  already carries the fixed Kerberos libraries, `zlib1g` and
+  `linux-libc-dev`; their exact upgrades are dropped. `libzstd1` is raised to
+  exactly 1.5.7+dfsg-1+deb13u1 (CVE-2026-124851, HIGH), the only Debian
+  package of the image with a published fix that the base digest does not
+  carry. No other package is added or upgraded. The remaining finding with a
+  fix, symfony/yaml in the vendor directory of MediaWiki core, is fixed only
+  by a MediaWiki release; it stays listed in `security/exceptions.yaml`.
+- Until `1.43.11-1.0.2` is published, the default of `MEDIAWIKI_IMAGE` is its
+  signed release candidate from a local test registry.
+
+### Upgrade notes
+- Configuration, environment, ports, networks, user and the database volume
+  are unchanged; only the image changes.
+
 ## [1.0.1] - 2026-11-24
 
 ### Security

@@ -23,7 +23,7 @@
 # ═══════════════════════════════════════════════════════════════════════════
 FROM docker.io/library/composer:2.8.12@sha256:5248900ab8b5f7f880c2d62180e40960cd87f60149ec9a1abfd62ac72a02577c AS composer
 
-FROM docker.io/library/mediawiki:1.43.11@sha256:9692cc01b83b4b0f9d775b0ac16ec681578f6c47fb5e67c59e6a9c204442b9f7
+FROM docker.io/library/mediawiki:1.43.11@sha256:491be985fd966e97b7df2d2dbd1bb005fa5e26924693de22fc4c8e52c536357c
 
 ARG PLUGGABLEAUTH_REF=afec61097c7b08e0c67641cc9cb5ee27b2d627f7
 ARG OPENIDCONNECT_REF=975992f2978e11f66b1ad5fd64e005592ba2fec3
@@ -36,7 +36,11 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # Debian security updates that the base digest does not carry yet, each
 # raised to exactly the fixed version (no blanket upgrade). Drop a line once
-# the base image ships that version or a newer one.
+# the base image ships that version or a newer one. One comment line per pin
+# names the package, the version and the advisory it fixes
+# (tools/test_mediawiki_image.py holds the two lists together):
+#
+#   libzstd1  1.5.7+dfsg-1+deb13u1  CVE-2026-124851
 #
 # The build fails on purpose when a pin no longer applies: the Debian security
 # mirror keeps only the newest version of a package, and `--only-upgrade` to a
@@ -47,11 +51,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # the current fixed version or drop it, and remove the whole block at the next
 # wiki base image bump that carries these versions.
 ARG DEBIAN_SECURITY_UPGRADES="\
-libgssapi-krb5-2=1.21.3-5+deb13u2 \
-libk5crypto3=1.21.3-5+deb13u2 \
-libkrb5-3=1.21.3-5+deb13u2 \
-libkrb5support0=1.21.3-5+deb13u2 \
-linux-libc-dev=6.12.118-1"
+libzstd1=1.5.7+dfsg-1+deb13u1"
 
 # hadolint ignore=DL3008
 RUN apt-get update \

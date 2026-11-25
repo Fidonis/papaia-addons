@@ -22,6 +22,12 @@ based on merged pull requests; this file mirrors the published releases.
   that is gone; `tools/test_scan_gate.py` checks that every entry names the
   pinned tag it was reviewed for and that no id, package and image appears
   twice.
+- **Wiki image `1.43.11-1.0.2`** (`mediawiki` 1.0.2, unreleased): rebuilt on
+  the current digest of MediaWiki 1.43.11 with `libzstd1` raised to the
+  Debian security version (CVE-2026-124851); no CRITICAL or HIGH Debian
+  finding with a fix is left in the image. `tools/test_mediawiki_image.py`
+  holds the image's Debian security pins to exact `--only-upgrade` versions,
+  each named next to its advisory.
 
 ### Changed
 - **CI tool set on the final papaia-kit 0.1.0**, the kit's first release

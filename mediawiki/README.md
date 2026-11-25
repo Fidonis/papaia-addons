@@ -90,17 +90,17 @@ variable in `<papaia-config>/addons/mediawiki/.env` to run another one.
 <!-- components:start -->
 | Component | Version | Role | Image variable |
 |---|---|---|---|
-| [MediaWiki](https://github.com/Fidonis/papaia-addons/tree/main/mediawiki/image) | `1.43.11-1.0.1` | primary | `MEDIAWIKI_IMAGE` |
+| [MediaWiki](https://github.com/Fidonis/papaia-addons/tree/main/mediawiki/image) | `1.43.11-1.0.2` | primary | `MEDIAWIKI_IMAGE` |
 | [MediaWiki MCP Server](https://github.com/ProfessionalWiki/MediaWiki-MCP-Server) | `0.21.0` | primary | `MEDIAWIKI_MCP_IMAGE` |
 | [MariaDB](https://mariadb.org) | `11.8.9` | sidecar | `MEDIAWIKI_DB_IMAGE` |
 <!-- components:end -->
 
-**Before the 1.43.11-1.0.1 release of papaia-mediawiki.** Until it is published, the default of
-`MEDIAWIKI_IMAGE` is its signed release candidate `1.43.11-1.0.1` from a local test registry
+**Before the 1.43.11-1.0.2 release of papaia-mediawiki.** Until it is published, the default of
+`MEDIAWIKI_IMAGE` is its signed release candidate `1.43.11-1.0.2` from a local test registry
 (`127.0.0.1:57500/unpublished/`), pinned by digest; it carries the security
 fixes of this version. Hosts without that registry set `MEDIAWIKI_IMAGE` to an
 image they can pull. `python3 tools/image_refs.py release` refuses any test
-registry image, so the published `ghcr.io/fidonis/papaia-mediawiki:1.43.11-1.0.1@sha256:<digest>`
+registry image, so the published `ghcr.io/fidonis/papaia-mediawiki:1.43.11-1.0.2@sha256:<digest>`
 replaces the candidate before this add-on is released.
 
 ---

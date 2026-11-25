@@ -415,6 +415,18 @@ The exit export is the directory written by Paperless-ngx's own exporter
 `document_importer` of the same Paperless-ngx version. `schemas/paperless-export-1.json`
 describes its `manifest.json`.
 
+**Upgrade test.** `tools/test_paperless_upgrade_live.py` installs the add-on with
+Paperless-ngx 3.4.2, writes synthetic documents, users, groups and permissions,
+switches to the add-on's default image on the same volumes and checks that files,
+tag tree, search, users, permissions and the gate are unchanged. It needs Docker and
+runs only when asked for:
+
+```bash
+PAPERLESS_UPGRADE_LIVE_PROJECT=paperless-upgrade \
+PAPERLESS_UPGRADE_LIVE_SUBNET=10.212.121.0/24 \
+  python3 -m unittest discover -s tools -p test_paperless_upgrade_live.py
+```
+
 ---
 
 ## Security notes

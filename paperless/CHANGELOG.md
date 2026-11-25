@@ -39,6 +39,12 @@ vulnerability database of 2026-11-25); what remains is listed one by one in
   the existing `paperless-data` and `paperless-pgdata` volumes are used as
   they are. A downgrade to 3.4.2 afterwards is not supported, so take a
   backup (`document_exporter`) first if a rollback must stay possible.
+- Tested upgrade path: 3.4.2 to 3.5.1 on the same volumes with the add-on's
+  compose file (`tools/test_paperless_upgrade_live.py`). Documents with their
+  original and archive files, notes, custom field values, the tag tree,
+  full-text search, users, groups, object permissions and the gate came
+  through unchanged. Upgrades from older releases were not tested; the backup
+  with `document_exporter` before the step stays recommended.
 - Other changes of Paperless-ngx 3.5 (upstream release notes): bulk actions
   run in the background, expired sessions are cleared automatically, OCR
   arguments that Paperless sets itself are ignored in `PAPERLESS_OCR_USER_ARGS`,

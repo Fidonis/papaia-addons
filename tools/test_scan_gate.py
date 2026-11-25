@@ -6,6 +6,7 @@ import contextlib
 import copy
 import dataclasses
 import datetime
+import hashlib
 import io
 import json
 import re
@@ -25,7 +26,12 @@ IMAGE = "ghcr.io/fidonis/papaia-mediawiki"
 THIRD_PARTY = "docker.io/library/postgres"
 DIGEST = "sha256:" + "c" * 64
 OTHER_DIGEST = "sha256:" + "d" * 64
+OWN_DIGEST = "sha256:" + "e" * 64
 THIRD_PARTY_REF = f"{THIRD_PARTY}:18.7@{DIGEST}"
+OWN_REF = f"{IMAGE}:1.43.11-1.0.0@{OWN_DIGEST}"
+# The CI tool set is pinned by tools/ci/uv.lock; its digest is the lock's sha256.
+TOOL_LOCK = b"version = 1\n# demo lock of the CI tool set\n"
+TOOL_DIGEST = "sha256:" + hashlib.sha256(TOOL_LOCK).hexdigest()
 PENDING_APPROVAL = re.compile(r"^pending \([^()<>]+\)$", re.IGNORECASE)
 # A role (optionally with name or date), not the `<role that countersigned>` placeholder.
 COUNTERSIGNED = re.compile(r"^[A-Za-z][^<>]*$")
@@ -48,7 +54,7 @@ def vuln(
     return found
 
 
-def report(*vulns: dict, artifact: str = f"{IMAGE}:1.43.11-1.0.0") -> dict:
+def report(*vulns: dict, artifact: str = THIRD_PARTY_REF) -> dict:
     return {
         "SchemaVersion": 2,
         "ArtifactName": artifact,
@@ -61,41 +67,53 @@ def report(*vulns: dict, artifact: str = f"{IMAGE}:1.43.11-1.0.0") -> dict:
 
 
 def entry(**overrides: object) -> dict:
+    """An approved 14-day entry for a fixable finding of the pinned third-party image.
+
+    Every entry names the digest it was reviewed for; `digest=None` drops it.
+    """
     base: dict = {
         "id": "CVE-2099-1000",
         "package": "libdemo",
-        "image": IMAGE,
+        "image": THIRD_PARTY,
+        # Field order of the committed file: digest right after image.
+        "digest": DIGEST,
         "severity": "HIGH",
-        "reason": "Reached only through a code path the add-on never enables.",
+        "reason": "Distribution fix available, the upstream image is not rebuilt yet.",
         "added": datetime.date(2026, 11, 20),
-        "expires": datetime.date(2027, 2, 1),
+        "expires": datetime.date(2026, 12, 4),
         "approved_by": "security officer",
     }
     base.update(overrides)
-    return base
+    return {k: v for k, v in base.items() if v is not None}
 
 
-def third_party_entry(**overrides: object) -> dict:
-    """An approved 14-day entry for a fixable finding of a third-party image."""
-    base = entry(
-        image=THIRD_PARTY,
-        digest=DIGEST,
-        reason="Distribution fix available, the upstream image is not rebuilt yet.",
-        added=datetime.date(2026, 11, 20),
-        expires=datetime.date(2026, 12, 4),
-    )
-    # Field order of the committed file: digest right after image.
-    ordered = {k: base[k] for k in ("id", "package", "image", "digest")}
-    ordered.update({k: v for k, v in base.items() if k not in ordered})
-    ordered.update(overrides)
-    return {k: v for k, v in ordered.items() if v is not None}
+third_party_entry = entry
 
 
-def pinning_root(base: Path, *refs: str) -> Path:
-    """A repository root whose only add-on pins `refs` as image defaults."""
+def own_entry(**overrides: object) -> dict:
+    """An entry for the own wiki image, bound to its pinned digest."""
+    return entry(**{"image": IMAGE, "digest": OWN_DIGEST, **overrides})
+
+
+def tool_entry(**overrides: object) -> dict:
+    """An entry for the CI tool set, bound to the digest of its lock."""
+    return entry(**{"image": scan_gate.TOOL_SET, "digest": TOOL_DIGEST, **overrides})
+
+
+def pinning_root(base: Path, *refs: str, lock: bytes | None = TOOL_LOCK) -> Path:
+    """A repository root whose only add-on pins `refs` as image defaults.
+
+    `lock` is the CI tool set lock (tools/ci/uv.lock) of that root; None leaves it out.
+    """
     root = base / "pins"
     addon = root / "demo"
     addon.mkdir(parents=True, exist_ok=True)
+    tool_set = root / "tools" / "ci"
+    tool_set.mkdir(parents=True, exist_ok=True)
+    if lock is None:
+        (tool_set / "uv.lock").unlink(missing_ok=True)
+    else:
+        (tool_set / "uv.lock").write_bytes(lock)
     (addon / "papaia-app.yaml").write_text("name: demo\nversion: 1.0.0\n", encoding="utf-8")
     services = "".join(
         f"  s{n}:\n    image: ${{S{n}_IMAGE:-{ref}}}\n" for n, ref in enumerate(refs)
@@ -110,8 +128,8 @@ def review_problems(raw: dict) -> list[str]:
     An entry is either waiting for the countersignature (`pending (<who signs>)`,
     which the gate lists without waiving anything) or names the role that
     countersigned it. Both are valid states of the file; an empty approval or the
-    template placeholder is not. Every entry expires at most MAX_DAYS after it
-    was added.
+    template placeholder is not. Every entry expires at most MAX_DAYS (14) after
+    it was added.
     """
     problems = []
     approval = raw.get("approved_by")
@@ -129,10 +147,6 @@ def review_problems(raw: dict) -> list[str]:
         problems.append("expires before it was added")
     elif (expires - added).days > scan_gate.MAX_DAYS:
         problems.append(f"valid for more than {scan_gate.MAX_DAYS} days")
-    elif isinstance(raw.get("image"), str) and scan_gate.is_third_party(raw["image"]) and (
-        (expires - added).days > scan_gate.THIRD_PARTY_MAX_DAYS
-    ):
-        problems.append(f"third-party entry valid for more than {scan_gate.THIRD_PARTY_MAX_DAYS} days")
     return problems
 
 
@@ -202,6 +216,10 @@ class GateCase(unittest.TestCase):
     ) -> tuple[int, str, str]:
         argv = [str(report_path), "--today", TODAY]
         argv += ["--exceptions", str(exceptions or self.write_exceptions([]))]
+        # The committed file is checked against the pins of this repository,
+        # a test file against a root that pins the demo images and tool set.
+        if root is None and exceptions != REPO_EXCEPTIONS:
+            root = pinning_root(self.tmp, THIRD_PARTY_REF, OWN_REF)
         if root is not None:
             argv += ["--root", str(root)]
         argv += list(extra)
@@ -321,7 +339,7 @@ class NoFixReportTest(GateCase):
         text = summary.read_text(encoding="utf-8")
         self.assertTrue(text.startswith("earlier step\n"))
         self.assertIn("| Image | Platform | Failing | Excepted | Without fix |", text)
-        self.assertIn(f"| `{IMAGE}:1.43.11-1.0.0` | linux/arm64 | 1 | 1 | 2 |", text)
+        self.assertIn(f"| `{THIRD_PARTY_REF}` | linux/arm64 | 1 | 1 | 2 |", text)
 
     def test_titles_and_descriptions_are_not_printed(self) -> None:
         found = vuln(fixed=None)
@@ -456,36 +474,144 @@ class ThirdPartyEntryTest(GateCase):
         self.assertEqual(code, 1)
         self.assertIn("exception pending approval", err)
 
-    def test_own_images_keep_the_ninety_day_form_without_digest(self) -> None:
-        code, _, _ = self.gate(report(vuln()), [entry()])
-        self.assertEqual(code, 0)
-        code, _, err = self.gate(report(vuln()), [entry(digest=DIGEST)])
+    def test_own_images_are_the_published_namespace_only(self) -> None:
+        for image in (IMAGE, "ghcr.io/fidonis/qdrant-mcp-rbac"):
+            with self.subTest(image=image):
+                self.assertTrue(scan_gate.is_own(image))
+        for image in (scan_gate.TOOL_SET, THIRD_PARTY, "ghcr.io/paperless-ngx/paperless-ngx", "ghcr.io/fidonisx/demo"):
+            with self.subTest(image=image):
+                self.assertFalse(scan_gate.is_own(image))
+
+
+class DigestBoundEntryTest(GateCase):
+    """Condition D1 of the security officer (2026-11-25), for every entry.
+
+    Every entry names the digest it was reviewed for and covers a scan of that
+    digest only; an entry for a finding with a fix runs at most 14 days; own
+    images fix, they do not except.
+    """
+
+    def test_own_image_or_tool_set_entry_without_digest_is_refused(self) -> None:
+        for raw in (own_entry(digest=None), tool_entry(digest=None)):
+            with self.subTest(image=raw["image"]):
+                code, _, err = self.run_gate(self.write_report(report()), self.write_exceptions([raw]))
+                self.assertEqual(code, 2, err)
+                self.assertIn("digest", err)
+
+    def test_tool_set_entry_with_the_scanned_digest_waives_its_finding(self) -> None:
+        code, out, err = self.run_gate(
+            self.write_report(report(vuln(), artifact=scan_gate.TOOL_SET)),
+            self.write_exceptions([tool_entry()]),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("1 excepted", out)
+
+    def test_tool_set_entry_with_another_digest_waives_nothing(self) -> None:
+        findings = [scan_gate.Finding("CVE-2099-1000", "libdemo", "1.0.0", "HIGH", "1.0.1")]
+        path = self.write_exceptions([tool_entry(digest=OTHER_DIGEST)])
+        entries = scan_gate.load_exceptions(path)
+        verdict = scan_gate.evaluate(
+            scan_gate.TOOL_SET, findings, entries, datetime.date(2026, 11, 21), digest=TOOL_DIGEST
+        )
+        self.assertEqual((len(verdict.failing), len(verdict.excepted)), (1, 0))
+        # Through the gate, a lock that moved leaves the entry unused: refused.
+        code, _, err = self.run_gate(self.write_report(report(vuln(), artifact=scan_gate.TOOL_SET)), path)
         self.assertEqual(code, 2)
-        self.assertIn("digest", err)
-        for image in ("ghcr.io/fidonis/qdrant-mcp-rbac", scan_gate.TOOL_SET):
-            with self.subTest(image=image):
-                self.assertFalse(scan_gate.is_third_party(image))
-        for image in (THIRD_PARTY, "ghcr.io/paperless-ngx/paperless-ngx", "ghcr.io/fidonisx/demo"):
-            with self.subTest(image=image):
-                self.assertTrue(scan_gate.is_third_party(image))
+        self.assertIn("no longer pinned", err)
+        self.assertIn(OTHER_DIGEST, err)
+
+    def test_tool_set_entry_is_refused_once_the_lock_is_gone(self) -> None:
+        root = pinning_root(self.tmp, THIRD_PARTY_REF, lock=None)
+        code, _, err = self.run_gate(
+            self.write_report(report(artifact=scan_gate.TOOL_SET)), self.write_exceptions([tool_entry()]), root=root
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("no longer pinned", err)
+
+    def test_tool_set_digest_is_the_sha256_of_its_lock(self) -> None:
+        root = pinning_root(self.tmp, THIRD_PARTY_REF)
+        self.assertEqual(scan_gate.tool_set_digest(root), TOOL_DIGEST)
+        self.assertIn((scan_gate.TOOL_SET, TOOL_DIGEST), scan_gate.pinned_digests(root))
+        self.assertIn((THIRD_PARTY, DIGEST), scan_gate.pinned_digests(root))
+        self.assertEqual(scan_gate.tool_set_digest(pinning_root(self.tmp, lock=None)), "")
+
+    def test_own_image_entry_with_another_digest_waives_nothing(self) -> None:
+        findings = [scan_gate.Finding("CVE-2099-1000", "libdemo", "1.0.0", "HIGH", "1.0.1")]
+        entries = scan_gate.load_exceptions(self.write_exceptions([own_entry()]))
+        verdict = scan_gate.evaluate(
+            f"{IMAGE}:1.43.11-1.0.0@{OTHER_DIGEST}", findings, entries, datetime.date(2026, 11, 21)
+        )
+        self.assertEqual((len(verdict.failing), len(verdict.excepted), verdict.refused), (1, 0, []))
+
+    def test_own_image_entry_for_a_finding_with_a_fix_is_refused(self) -> None:
+        # Regardless of term and signature, and for a release candidate too.
+        cases = {
+            "approved, 14 days": own_entry(),
+            "approved, 1 day": own_entry(expires=datetime.date(2026, 11, 21)),
+            "pending": own_entry(approved_by="pending (security officer countersignature)"),
+            "critical": own_entry(severity="CRITICAL"),
+        }
+        for name, raw in cases.items():
+            with self.subTest(case=name):
+                found = vuln(severity=raw["severity"])
+                code, out, err = self.run_gate(
+                    self.write_report(report(found, artifact=OWN_REF)), self.write_exceptions([raw])
+                )
+                self.assertEqual(code, 2, out)
+                self.assertIn("own images fix", err)
+                self.assertIn("CVE-2099-1000 libdemo", err)
+                self.assertIn("0 excepted", out)
+        candidate = f"127.0.0.1:57500/unpublished/papaia-mediawiki:1.43.11-1.0.0@{OWN_DIGEST}"
+        code, _, err = self.run_gate(
+            self.write_report(report(vuln(), artifact=candidate)), self.write_exceptions([own_entry()])
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("own images fix", err)
+
+    def test_own_image_entry_for_a_finding_without_fix_is_not_needed(self) -> None:
+        code, out, err = self.run_gate(
+            self.write_report(report(vuln(fixed=None), artifact=OWN_REF)), self.write_exceptions([own_entry()])
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("exception not needed (finding has no fix)", out)
+
+    def test_fifteen_days_are_refused_for_every_image(self) -> None:
+        long = {"added": datetime.date(2026, 11, 20), "expires": datetime.date(2026, 12, 5)}
+        for raw in (entry(**long), own_entry(**long), tool_entry(**long)):
+            with self.subTest(image=raw["image"]):
+                code, _, err = self.run_gate(self.write_report(report()), self.write_exceptions([raw]))
+                self.assertEqual(code, 2, err)
+                self.assertIn("14 days", err)
+                with self.assertRaises(scan_gate.GateError):
+                    scan_gate.load_exceptions(self.write_exceptions([raw]))
+
+    def test_fourteen_days_pass_for_third_party_and_tool_set(self) -> None:
+        self.assertEqual(scan_gate.MAX_DAYS, 14)
+        for raw, artifact in ((entry(), THIRD_PARTY_REF), (tool_entry(), scan_gate.TOOL_SET)):
+            with self.subTest(image=raw["image"]):
+                self.assertEqual((raw["expires"] - raw["added"]).days, 14)
+                code, out, err = self.run_gate(
+                    self.write_report(report(vuln(), artifact=artifact)), self.write_exceptions([raw])
+                )
+                self.assertEqual(code, 0, err)
+                self.assertIn("1 excepted", out)
 
 
 class RepositoryEntryFormTest(GateCase):
     """The committed exception file under the new form."""
 
     def test_committed_file_loads_and_names_pinned_digests_only(self) -> None:
-        import image_refs
-
+        # A digest that no add-on default or CI tool pin uses any more is an
+        # unused entry: re-check it against the scan of the new pin.
         entries = scan_gate.load_exceptions(REPO_EXCEPTIONS)
-        refs = image_refs.pinned_refs(image_refs.checked_addons(HERE.parent))
-        self.assertEqual(scan_gate.stale_digest_entries(entries, refs), [])
+        stale = scan_gate.stale_digest_entries(entries, scan_gate.pinned_digests(HERE.parent))
+        self.assertEqual([f"{e.image}@{e.digest} {e.vuln_id} {e.package}" for e in stale], [])
 
-    def test_committed_third_party_entries_are_digest_scoped_and_short(self) -> None:
+    def test_committed_entries_are_digest_bound_and_short(self) -> None:
         for item in scan_gate.load_exceptions(REPO_EXCEPTIONS):
-            if scan_gate.is_third_party(item.image):
-                with self.subTest(id=item.vuln_id, package=item.package, image=item.image):
-                    self.assertRegex(item.digest, r"^sha256:[0-9a-f]{64}$")
-                    self.assertLessEqual((item.expires - item.added).days, scan_gate.THIRD_PARTY_MAX_DAYS)
+            with self.subTest(id=item.vuln_id, package=item.package, image=item.image):
+                self.assertRegex(item.digest, r"^sha256:[0-9a-f]{64}$")
+                self.assertLessEqual((item.expires - item.added).days, 14)
 
     def test_committed_file_has_no_entry_for_a_finding_without_fix(self) -> None:
         stale = [key for key, reason in REASONS.items() if "no fixed version" in reason]
@@ -510,8 +636,13 @@ class RepositoryEntryFormTest(GateCase):
         ]
         self.assertEqual(fixable, [])
 
-    def test_third_party_entry_of_fifteen_days_or_without_digest_is_refused(self) -> None:
-        for raw in (third_party_entry(expires=datetime.date(2026, 12, 5)), third_party_entry(digest=None)):
+    def test_entry_of_fifteen_days_or_without_digest_is_refused(self) -> None:
+        cases = [
+            make(**change)
+            for make in (entry, own_entry, tool_entry)
+            for change in ({"expires": datetime.date(2026, 12, 5)}, {"digest": None})
+        ]
+        for raw in cases:
             with self.subTest(entry=raw), self.assertRaises(scan_gate.GateError):
                 scan_gate.load_exceptions(self.write_exceptions([raw]))
 
@@ -582,17 +713,13 @@ class ExceptionTest(GateCase):
         )
         self.assertEqual(code, 1)
 
-    def test_image_is_matched_without_tag_and_digest(self) -> None:
-        artifact = f"{IMAGE}:1.43.11-1.0.0@sha256:{'a' * 64}"
-        code, _, _ = self.run_gate(
-            self.write_report(report(vuln(), artifact=artifact)), self.write_exceptions([entry()])
-        )
-        self.assertEqual(code, 0)
-        artifact = f"{IMAGE}@sha256:{'b' * 64}"
-        code, _, _ = self.run_gate(
-            self.write_report(report(vuln(), artifact=artifact)), self.write_exceptions([entry()])
-        )
-        self.assertEqual(code, 0)
+    def test_image_is_matched_by_repository_and_digest_whatever_the_tag(self) -> None:
+        for artifact in (f"{THIRD_PARTY}:18.7@{DIGEST}", f"{THIRD_PARTY}:other@{DIGEST}", f"{THIRD_PARTY}@{DIGEST}"):
+            with self.subTest(artifact=artifact):
+                code, _, _ = self.run_gate(
+                    self.write_report(report(vuln(), artifact=artifact)), self.write_exceptions([entry()])
+                )
+                self.assertEqual(code, 0)
 
     def test_exception_for_another_package_does_not_cover(self) -> None:
         code, _, _ = self.run_gate(
@@ -604,7 +731,7 @@ class ExceptionTest(GateCase):
         code, _, err = self.run_gate(
             self.write_report(report(vuln())),
             self.write_exceptions(
-                [entry(added=datetime.date(2026, 9, 1), expires=datetime.date(2026, 11, 20))]
+                [entry(added=datetime.date(2026, 11, 10), expires=datetime.date(2026, 11, 20))]
             ),
         )
         self.assertEqual(code, 1)
@@ -614,7 +741,7 @@ class ExceptionTest(GateCase):
         code, _, err = self.run_gate(
             self.write_report(report()),
             self.write_exceptions(
-                [entry(added=datetime.date(2026, 9, 1), expires=datetime.date(2026, 11, 20))]
+                [entry(added=datetime.date(2026, 11, 10), expires=datetime.date(2026, 11, 20))]
             ),
         )
         self.assertEqual(code, 1)
@@ -624,7 +751,7 @@ class ExceptionTest(GateCase):
         code, _, _ = self.run_gate(
             self.write_report(report(vuln())),
             self.write_exceptions(
-                [entry(added=datetime.date(2026, 9, 1), expires=datetime.date(2026, 11, 21))]
+                [entry(added=datetime.date(2026, 11, 10), expires=datetime.date(2026, 11, 21))]
             ),
         )
         self.assertEqual(code, 0)
@@ -647,11 +774,10 @@ class ExceptionTest(GateCase):
         self.assertEqual(code, 0)
         self.assertIn("pending approval", out)
 
-    def test_tool_set_report_is_matched_by_its_path(self) -> None:
-        tools = "tools/ci"
+    def test_tool_set_report_is_matched_by_its_path_and_lock_digest(self) -> None:
         code, _, _ = self.run_gate(
-            self.write_report(report(vuln(), artifact=tools)),
-            self.write_exceptions([entry(image=tools)]),
+            self.write_report(report(vuln(), artifact="tools/ci")),
+            self.write_exceptions([tool_entry()]),
         )
         self.assertEqual(code, 0)
 
@@ -685,16 +811,16 @@ class PinnedImageTest(GateCase):
 
     def test_entry_for_an_image_no_addon_pins_is_reported(self) -> None:
         entries = scan_gate.load_exceptions(
-            self.write_exceptions([entry(), third_party_entry(image="docker.io/library/gone")])
+            self.write_exceptions([entry(), entry(image="docker.io/library/gone")])
         )
-        stale = scan_gate.unpinned_entries(entries, {IMAGE})
+        stale = scan_gate.unpinned_entries(entries, {THIRD_PARTY})
         self.assertEqual([item.image for item in stale], ["docker.io/library/gone"])
 
     def test_entries_for_pinned_images_and_the_tool_set_pass(self) -> None:
         entries = scan_gate.load_exceptions(
-            self.write_exceptions([entry(), entry(image=scan_gate.TOOL_SET)])
+            self.write_exceptions([entry(), tool_entry()])
         )
-        self.assertEqual(scan_gate.unpinned_entries(entries, {IMAGE}), [])
+        self.assertEqual(scan_gate.unpinned_entries(entries, {THIRD_PARTY}), [])
 
     def test_pinned_repositories_follow_the_compose_defaults(self) -> None:
         root = self.tmp / "repo"
@@ -716,12 +842,15 @@ class PinnedImageTest(GateCase):
 
     def test_candidate_report_is_matched_by_the_published_repository(self) -> None:
         candidate = "127.0.0.1:57500/unpublished/qdrant-mcp-rbac:0.3.1@sha256:" + "b" * 64
+        root = pinning_root(self.tmp, candidate)
+        published = own_entry(image="ghcr.io/fidonis/qdrant-mcp-rbac", digest="sha256:" + "b" * 64)
         code, out, _ = self.run_gate(
-            self.write_report(report(vuln(), artifact=candidate)),
-            self.write_exceptions([entry(image="ghcr.io/fidonis/qdrant-mcp-rbac")]),
+            self.write_report(report(vuln(fixed=None), artifact=candidate)),
+            self.write_exceptions([published]),
+            root=root,
         )
         self.assertEqual(code, 0, out)
-        self.assertNotIn("unused", out)
+        self.assertIn("exception not needed (finding has no fix): CVE-2099-1000", out)
 
     def test_candidate_report_without_entry_fails(self) -> None:
         candidate = "127.0.0.1:57500/unpublished/qdrant-mcp-rbac:0.3.1@sha256:" + "b" * 64
@@ -792,7 +921,7 @@ class PinnedImageTest(GateCase):
                 self.assertEqual(review_problems(raw), [])
 
     def test_review_check_accepts_pending_and_countersigned_entries(self) -> None:
-        base = {"added": datetime.date(2026, 11, 24), "expires": datetime.date(2027, 2, 22)}
+        base = {"added": datetime.date(2026, 11, 24), "expires": datetime.date(2026, 12, 8)}
         for approval in (
             "pending (security officer countersignature)",
             "security officer",
@@ -802,13 +931,13 @@ class PinnedImageTest(GateCase):
                 self.assertEqual(review_problems({**base, "approved_by": approval}), [])
 
     def test_review_check_rejects_missing_approval_placeholders_and_long_validity(self) -> None:
-        base = {"added": datetime.date(2026, 11, 24), "expires": datetime.date(2027, 2, 22)}
+        base = {"added": datetime.date(2026, 11, 24), "expires": datetime.date(2026, 12, 8)}
         cases = {
             "empty": {**base, "approved_by": "  "},
             "not text": {**base, "approved_by": None},
             "pending without approver": {**base, "approved_by": "pending"},
             "template placeholder": {**base, "approved_by": "<role that countersigned>"},
-            "too long": {**base, "approved_by": "security officer", "expires": datetime.date(2027, 2, 23)},
+            "too long": {**base, "approved_by": "security officer", "expires": datetime.date(2026, 12, 9)},
             "expires before added": {
                 **base,
                 "approved_by": "security officer",
@@ -865,12 +994,13 @@ class ExceptionFileValidationTest(GateCase):
     def test_short_reason_is_rejected(self) -> None:
         self.assert_rejected(self.write_exceptions([entry(reason="no fix yet")]))
 
-    def test_validity_longer_than_ninety_days_is_rejected(self) -> None:
-        self.assert_rejected(
+    def test_validity_longer_than_fourteen_days_is_rejected(self) -> None:
+        err = self.assert_rejected(
             self.write_exceptions(
-                [entry(added=datetime.date(2026, 11, 1), expires=datetime.date(2027, 2, 1))]
+                [entry(added=datetime.date(2026, 11, 1), expires=datetime.date(2026, 11, 16))]
             )
         )
+        self.assertIn("14 days", err)
 
     def test_expiry_before_added_is_rejected(self) -> None:
         self.assert_rejected(

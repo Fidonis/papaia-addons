@@ -20,11 +20,12 @@ def entry(**overrides: object) -> dict:
     base: dict = {
         "id": "CVE-2099-1000",
         "package": "libdemo",
-        "image": "ghcr.io/fidonis/papaia-mediawiki",
+        "image": "docker.io/library/postgres",
+        "digest": "sha256:" + "c" * 64,
         "severity": "HIGH",
-        "reason": "Reached only through a code path the add-on never enables.",
+        "reason": "Distribution fix available, the upstream image is not rebuilt yet.",
         "added": datetime.date(2026, 11, 20),
-        "expires": datetime.date(2027, 2, 1),
+        "expires": datetime.date(2026, 12, 4),
         "approved_by": "security officer",
     }
     base.update(overrides)
@@ -52,9 +53,6 @@ class ReleaseLineTest(unittest.TestCase):
             entry(
                 id="CVE-2099-2000",
                 package="libpending",
-                image="docker.io/library/postgres",
-                digest="sha256:" + "c" * 64,
-                expires=datetime.date(2026, 12, 4),
                 approved_by="pending (security officer countersignature)",
             ),
         ])

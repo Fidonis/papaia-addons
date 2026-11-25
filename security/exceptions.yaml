@@ -15,60 +15,56 @@
 #   maintainer reviews these lists once a month and records the review in the
 #   "Monthly review" table of docs/development.md. An entry that matches only
 #   such a finding waives nothing and is reported for removal.
+# - Every entry names the digest of the build it was reviewed for and covers
+#   a scan of exactly that digest: the pinned image index (both platforms are
+#   scanned from it), or for the CI tool set the sha256 of tools/ci/uv.lock.
+#   The gate refuses an entry without a digest and waives nothing for another
+#   digest.
+# - Every entry waives a finding with a fix and runs at most 14 days after
+#   `added`; the gate refuses a longer term.
 # - Own images (ghcr.io/fidonis/...): a finding with a fix is fixed in the
 #   image, also when it lives in vendored upstream code (the wiki image raises
-#   such packages through mediawiki/image/core-vendor.lock). An entry is the
-#   exception for a fix that cannot be taken in the image at all; it runs at
-#   most 90 days. The same form holds for the CI tool set.
-# - Third-party images: an entry is allowed only while the distribution ships
-#   the fixed package and the upstream image is not rebuilt yet. It names the
-#   pinned digest and runs at most 14 days. The reason names the tag checked
-#   and the digest it pointed to on that date. Re-pinning does not extend
-#   `expires`; when the pin moves, the gate refuses the entry until it is
-#   re-checked against the scan of the new pin and rewritten or removed.
+#   such packages through mediawiki/image/core-vendor.lock). Own images fix,
+#   they do not except: the gate refuses an own image entry that matches a
+#   finding with a fix, whatever its term and signature.
+# - Third-party images and the CI tool set: an entry is allowed only while the
+#   fixed package is published and the upstream image (or the locked tool) is
+#   not rebuilt yet. The reason names the tag checked and the digest it
+#   pointed to on that date.
+# - When a pin moves (image digest or tools/ci/uv.lock), every entry of it is
+#   re-checked against the scan of the new pin and rewritten or removed; the
+#   gate refuses an entry whose digest is no longer pinned. Re-pinning never
+#   extends `expires`.
 #
 # No entry waives anything before the security officer countersigns it:
 # `approved_by: pending ...` is listed and the finding still fails. No release
 # is cut while any entry is pending: `tools/release_line.py` refuses on main,
 # on pull requests into main and when a release is published.
 # tools/test_scan_gate.py fails when an entry names an image or digest that
-# no add-on default pins any more.
+# no add-on default or CI tool pin uses any more.
 #
-# Own image or CI tool set (one entry per finding):
+# Entry form (one entry per finding with a fix):
 #
 #   - id: CVE-2026-00000             # as Trivy reports it (CVE-, GHSA-, ...)
 #     package: libexample            # PkgName in the report
-#     image: ghcr.io/fidonis/name    # repository without tag or digest; for a
-#                                    # test registry candidate the published
-#                                    # repository (ghcr.io/fidonis/<name>)
+#     image: docker.io/library/name  # repository as pinned, without tag or
+#                                    # digest; `tools/ci` for the CI tool set
+#     digest: sha256:<64 hex>        # the pinned image index, or the sha256 of
+#                                    # tools/ci/uv.lock; covers this digest only
 #     severity: HIGH                 # HIGH or CRITICAL, as reported
-#     reason: >-                     # why it is accepted and what resolves it
-#       ...
-#     added: 2026-11-24              # unquoted dates
-#     expires: 2027-02-22            # at most 90 days after `added`
-#     approved_by: <role that countersigned>
-#                                    # or `pending (<role that countersigns>)`
-#
-# Third-party image (one entry per finding with a fix):
-#
-#   - id: CVE-2026-00000
-#     package: libexample
-#     image: docker.io/library/name  # repository as pinned, without tag or digest
-#     digest: sha256:<64 hex>        # the pinned image index; covers this digest only
-#     severity: HIGH
-#     reason: >-                     # distribution fix available, upstream image not
-#       ...                          # rebuilt yet: tag and digest checked, with date
-#     added: 2026-11-25
+#     reason: >-                     # fixed package published, image not rebuilt
+#       ...                          # yet: tag and digest checked, with date
+#     added: 2026-11-25              # unquoted dates
 #     expires: 2026-12-09            # at most 14 days after `added`
 #     approved_by: pending (<role that countersigns>)
+#                                    # or the role that countersigned
 #
 # Unknown fields are refused. An expired entry fails every scan until it is
 # removed or renewed with a new review; an approved entry whose finding is
 # gone is reported as unused and should be removed.
 #
 # Review schedule: the third-party entries added on 2026-11-25 expire on
-# 2026-12-09; the own image entries on 2027-02-22. One expired entry fails
-# every image scan and the nightly scan.
+# 2026-12-09. One expired entry fails every image scan and the nightly scan.
 
 version: 1
 

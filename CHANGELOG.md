@@ -11,6 +11,17 @@ based on merged pull requests; this file mirrors the published releases.
 ## [Unreleased]
 
 ### Security
+- **Every scan exception is bound to a digest and runs at most 14 days.**
+  Each entry of `security/exceptions.yaml` names the digest of the build it
+  was reviewed for (the pinned image index, or the sha256 of
+  `tools/ci/uv.lock` for the CI tool set) and waives nothing for another
+  build; the gate refuses an entry without a digest or for a digest that is no
+  longer pinned. The 90-day form for own images and the CI tool set is gone:
+  every entry expires at most 14 days after it was added, and an own-image
+  entry that matches a finding with a fix is refused whatever its term and
+  signature (own images fix, they do not except). Entries before and after:
+  own images 0 and 0, CI tool set 0 and 0, third-party images 741 and 741
+  (already in this form).
 - **Scan rule: block on fixable findings, report the rest.** A CRITICAL or
   HIGH finding with a fix fails every image scan unless an approved entry of
   `security/exceptions.yaml` covers it; one without a fix never fails and

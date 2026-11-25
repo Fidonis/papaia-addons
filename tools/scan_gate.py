@@ -18,22 +18,27 @@ list `security/exceptions.yaml`, and decides:
 An exception covers a finding when `id`, `package`, `severity` and `image`
 (the repository, without tag or digest; for a release candidate from a local
 test registry the repository it is published to; for a scan of the CI tool
-set the scanned path, `tools/ci`) are equal, and only once it is approved: an
-entry whose `approved_by` starts with `pending` is listed but waives nothing.
-Each entry carries a reason and the date it was added.
+set the scanned path, `tools/ci`) are equal, the scan is of the entry's
+`digest`, and only once it is approved: an entry whose `approved_by` starts
+with `pending` is listed but waives nothing. Each entry carries a reason and
+the date it was added.
 
-* Own images (`ghcr.io/fidonis/...`) and the CI tool set: expiry at most 90
-  days after `added`, no `digest`.
-* Third-party images: the entry also names `digest`, the sha256 of the pinned
-  image index, and expires at most 14 days after `added`. It covers a finding
-  only in a scan of that digest, and the run is refused while the digest is no
-  longer pinned by an add-on default (`--root`).
+* Every entry names `digest`, the build it was reviewed for: the sha256 of the
+  pinned image index, or for the CI tool set the sha256 of `tools/ci/uv.lock`.
+  It covers a finding only in a scan of that digest, and the run is refused
+  while the digest is no longer pinned by an add-on default or the tool set
+  lock (`--root`).
+* Every entry expires at most 14 days after `added`.
+* Own images (`ghcr.io/fidonis/...`) fix, they do not except: an entry that
+  matches a finding with a fix in a scan of its digest is refused, whatever its
+  term and signature.
 
 See `security/exceptions.yaml` for the format. Titles and descriptions of the
 report are never printed.
 
 Exit codes: 0 nothing to act on, 1 failing findings or expired exceptions,
-2 the report, the exception list or an argument is unreadable or invalid.
+2 the report, the exception list or an argument is unreadable or invalid, or an
+own-image entry matches a finding with a fix.
 """
 
 from __future__ import annotations
@@ -41,6 +46,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import datetime
+import hashlib
 import json
 import re
 import sys
@@ -51,8 +57,9 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_EXCEPTIONS = REPO_ROOT / "security" / "exceptions.yaml"
-# The scan of the CI tool set reports this path as its artifact.
+# The scan of the CI tool set reports this path as its artifact; the lock pins it.
 TOOL_SET = "tools/ci"
+TOOL_SET_LOCK = Path("tools") / "ci" / "uv.lock"
 # A release candidate in a local test registry (`127.0.0.1:<port>/unpublished/<name>`)
 # is published as `<PUBLISHED_NAMESPACE>/<name>`; exceptions name the published
 # repository, so they hold for the candidate and the release alike.
@@ -66,18 +73,21 @@ OWN_PREFIX = PUBLISHED_NAMESPACE + "/"
 
 SEVERITIES = ("CRITICAL", "HIGH", "MEDIUM", "LOW", "UNKNOWN")
 EXCEPTABLE = ("CRITICAL", "HIGH")
-MAX_DAYS = 90
-# A third-party image whose distribution ships the fix but whose upstream image
-# is not rebuilt yet: one digest, at most this many days.
-THIRD_PARTY_MAX_DAYS = 14
+# Every entry waives a finding with a fix (one without a fix needs none): one
+# digest, at most this many days (security officer, condition D1, 2026-11-25).
+MAX_DAYS = 14
+# The rule an own-image entry for a finding with a fix breaks.
+OWN_IMAGE_RULE = (
+    "own images fix, they do not except: an entry for a finding with a fix in an "
+    f"own image ({PUBLISHED_NAMESPACE}/...) is refused whatever its term and signature; "
+    "fix the finding in the image and remove the entry"
+)
 MIN_REASON = 20
 MAX_REPORT_BYTES = 256 * 1024 * 1024
 # One entry per waived CRITICAL or HIGH finding with a fix of every pinned image.
 MAX_EXCEPTIONS_BYTES = 2 * 1024 * 1024
 MAX_ENTRIES = 4000
-ENTRY_FIELDS = ("id", "package", "image", "severity", "reason", "added", "expires", "approved_by")
-# Required for third-party images, refused for the own images and the CI tool set.
-OPTIONAL_FIELDS = ("digest",)
+ENTRY_FIELDS = ("id", "package", "image", "digest", "severity", "reason", "added", "expires", "approved_by")
 DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 PLATFORM = re.compile(r"^[a-z0-9]{1,16}/[a-z0-9_]{1,16}(?:/[a-z0-9]{1,8})?$")
 TOP_FIELDS = ("version", "exceptions")
@@ -123,9 +133,9 @@ class Entry:
         return (self.image, self.vuln_id, self.package, self.severity)
 
 
-def is_third_party(image: str) -> bool:
-    """`image` (as an exception names it) is neither an own image nor the CI tool set."""
-    return image != TOOL_SET and not image.startswith(OWN_PREFIX)
+def is_own(image: str) -> bool:
+    """`image` (as an exception names it) is an own image."""
+    return image.startswith(OWN_PREFIX)
 
 
 def repository(artifact: str) -> str:
@@ -232,12 +242,15 @@ def load_exceptions(path: Path) -> list[Entry]:
         where = f"{path}: exceptions[{i}]"
         if not isinstance(raw, dict):
             raise GateError(f"{where}: expected a mapping")
-        unknown = sorted(set(raw) - set(ENTRY_FIELDS) - set(OPTIONAL_FIELDS))
+        unknown = sorted(set(raw) - set(ENTRY_FIELDS))
         if unknown:
             raise GateError(f"{where}: unknown field(s) {', '.join(map(str, unknown))}")
         missing = [name for name in ENTRY_FIELDS if name not in raw]
         if missing:
-            raise GateError(f"{where}: missing field(s) {', '.join(missing)}")
+            hint = " (every entry names the digest it was reviewed for: digest: sha256:...)" if (
+                "digest" in missing
+            ) else ""
+            raise GateError(f"{where}: missing field(s) {', '.join(missing)}{hint}")
         vuln_id = _text(raw["id"], f"{where}.id", limit=96)
         if not VULN_ID.match(vuln_id):
             raise GateError(f"{where}.id: not a vulnerability id")
@@ -265,23 +278,12 @@ def load_exceptions(path: Path) -> list[Entry]:
         if expires < added:
             raise GateError(f"{where}: expires before it was added")
         if (expires - added).days > MAX_DAYS:
-            raise GateError(f"{where}: valid for more than {MAX_DAYS} days")
-        digest = ""
-        if is_third_party(image):
-            if "digest" not in raw:
-                raise GateError(
-                    f"{where}: a third-party image entry names the pinned digest (digest: sha256:...)"
-                )
-            digest = _text(raw["digest"], f"{where}.digest", limit=71)
-            if not DIGEST.match(digest):
-                raise GateError(f"{where}.digest: expected sha256: followed by 64 lower-case hex digits")
-            if (expires - added).days > THIRD_PARTY_MAX_DAYS:
-                raise GateError(
-                    f"{where}: a third-party image entry is valid for at most "
-                    f"{THIRD_PARTY_MAX_DAYS} days"
-                )
-        elif "digest" in raw:
-            raise GateError(f"{where}.digest: only third-party image entries name a digest")
+            raise GateError(
+                f"{where}: an entry for a finding with a fix is valid for at most {MAX_DAYS} days"
+            )
+        digest = _text(raw["digest"], f"{where}.digest", limit=71)
+        if not DIGEST.match(digest):
+            raise GateError(f"{where}.digest: expected sha256: followed by 64 lower-case hex digits")
         item = Entry(vuln_id, package, image, severity, added, expires, approved, digest)
         if item.key() in seen:
             raise GateError(f"{where}: duplicate of an earlier entry")
@@ -303,15 +305,31 @@ def unpinned_entries(entries: list[Entry], pinned: set[str]) -> list[Entry]:
     return [e for e in entries if e.image != TOOL_SET and e.image not in pinned]
 
 
-def pinned_digests(refs: set[str]) -> set[tuple[str, str]]:
-    """(exception image, digest) of each pinned reference."""
-    return {(exception_image(repository(ref)), artifact_digest(ref)) for ref in refs}
+def tool_set_digest(root: Path) -> str:
+    """`sha256:` of the CI tool set lock under `root`, or "" without one."""
+    try:
+        return "sha256:" + hashlib.sha256((root / TOOL_SET_LOCK).read_bytes()).hexdigest()
+    except FileNotFoundError:
+        return ""
+    except OSError as exc:
+        raise GateError(f"{root / TOOL_SET_LOCK}: {exc}") from exc
 
 
-def stale_digest_entries(entries: list[Entry], refs: set[str]) -> list[Entry]:
-    """Third-party entries whose digest no add-on default pins any more."""
-    pinned = pinned_digests(refs)
-    return [e for e in entries if e.digest and (e.image, e.digest) not in pinned]
+def pinned_digests(root: Path) -> set[tuple[str, str]]:
+    """(exception image, digest) of each add-on default and the CI tool set under `root`."""
+    import image_refs
+
+    refs = image_refs.pinned_refs(image_refs.checked_addons(root))
+    pinned = {(exception_image(repository(ref)), artifact_digest(ref)) for ref in refs}
+    lock = tool_set_digest(root)
+    if lock:
+        pinned.add((TOOL_SET, lock))
+    return pinned
+
+
+def stale_digest_entries(entries: list[Entry], pinned: set[tuple[str, str]]) -> list[Entry]:
+    """Entries whose digest no add-on default or CI tool pin uses any more."""
+    return [e for e in entries if (e.image, e.digest) not in pinned]
 
 
 @dataclasses.dataclass
@@ -324,21 +342,34 @@ class Verdict:
     pending: list[Entry]
     blocked: list[Finding]
     not_needed: list[Entry]
+    # Own-image entries matching a finding with a fix: never waive, refuse the run.
+    refused: list[Entry] = dataclasses.field(default_factory=list)
 
     @property
     def ok(self) -> bool:
-        return not self.failing and not self.expired
+        return not self.failing and not self.expired and not self.refused
 
 
 def evaluate(
-    artifact: str, findings: list[Finding], exceptions: list[Entry], today: datetime.date
+    artifact: str,
+    findings: list[Finding],
+    exceptions: list[Entry],
+    today: datetime.date,
+    digest: str | None = None,
 ) -> Verdict:
+    """Decide the findings of one scan; `digest` defaults to the artifact's digest."""
     image = exception_image(repository(artifact))
-    digest = artifact_digest(artifact)
-    # A digest-scoped entry applies to a scan of that digest only.
-    current = [
-        e for e in exceptions if e.expires >= today and (not e.digest or e.digest == digest)
-    ]
+    if digest is None:
+        digest = artifact_digest(artifact)
+    # An entry applies to a scan of its digest only; a scan without one matches none.
+    scanned = [e for e in exceptions if digest and e.digest == digest and e.image == image]
+    fixable_keys = {
+        (image, f.vuln_id, f.package, f.severity)
+        for f in findings
+        if f.severity in EXCEPTABLE and f.fixable
+    }
+    refused = [e for e in scanned if is_own(e.image) and e.key() in fixable_keys]
+    current = [e for e in scanned if e.expires >= today and e not in refused]
     valid = {e.key(): e for e in current if e.approved}
     waiting = {e.key(): e for e in current if not e.approved}
     used: set[tuple[str, str, str, str]] = set()
@@ -369,7 +400,7 @@ def evaluate(
         if e.key() not in used and e.key() not in no_fix_keys and e.image == image
     ]
     pending = [e for e in waiting.values() if e.image == image]
-    return Verdict(failing, excepted, unfixed, expired, unused, pending, blocked, not_needed)
+    return Verdict(failing, excepted, unfixed, expired, unused, pending, blocked, not_needed, refused)
 
 
 def no_fix_lines(artifact: str, platform: str, verdict: Verdict) -> list[str]:
@@ -432,22 +463,23 @@ def main(argv: list[str] | None = None) -> int:
     try:
         artifact, findings = load_report(args.report)
         exceptions = load_exceptions(args.exceptions)
-        if any(e.digest for e in exceptions):
-            import image_refs
-
-            refs = image_refs.pinned_refs(image_refs.checked_addons(args.root))
-            stale = stale_digest_entries(exceptions, refs)
+        scanned_digest = None
+        if repository(artifact) == TOOL_SET:
+            # The tool set scan is of the checkout under --root; its lock is the pin.
+            scanned_digest = tool_set_digest(args.root)
+        if exceptions:
+            stale = stale_digest_entries(exceptions, pinned_digests(args.root))
             if stale:
                 names = "; ".join(f"{e.vuln_id} {e.package} {e.image}@{e.digest}" for e in stale)
                 raise GateError(
-                    f"{args.exceptions}: digest no longer pinned by an add-on default, "
-                    f"re-check the entries against the scan of the new pin: {names}"
+                    f"{args.exceptions}: digest no longer pinned by an add-on default or the "
+                    f"CI tool set lock, re-check the entries against the scan of the new pin: {names}"
                 )
     except GateError as exc:
         print(f"scan gate: {exc}", file=sys.stderr)
         return 2
 
-    verdict = evaluate(artifact, findings, exceptions, today)
+    verdict = evaluate(artifact, findings, exceptions, today, scanned_digest)
     for finding in verdict.unfixed:
         print(f"listed: {finding.describe()}")
     for finding in verdict.excepted:
@@ -469,6 +501,12 @@ def main(argv: list[str] | None = None) -> int:
             f"FAIL exception {item.vuln_id} {item.package} expired on {item.expires.isoformat()}",
             file=sys.stderr,
         )
+    for item in verdict.refused:
+        print(
+            f"REFUSED exception {item.vuln_id} {item.package} {item.severity} {item.image}: "
+            f"{OWN_IMAGE_RULE}",
+            file=sys.stderr,
+        )
     print(
         f"{artifact}: {len(verdict.failing)} failing, {len(verdict.excepted)} excepted, "
         f"{len(verdict.unfixed)} without fix (CRITICAL/HIGH), {len(verdict.expired)} expired exceptions"
@@ -482,6 +520,8 @@ def main(argv: list[str] | None = None) -> int:
                 handle.write(summary_table(artifact, args.platform, verdict))
     except OSError as exc:
         print(f"scan gate: {exc}", file=sys.stderr)
+        return 2
+    if verdict.refused:
         return 2
     return 0 if verdict.ok else 1
 

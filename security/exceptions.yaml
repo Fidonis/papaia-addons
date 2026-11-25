@@ -16,9 +16,10 @@
 #   "Monthly review" table of docs/development.md. An entry that matches only
 #   such a finding waives nothing and is reported for removal.
 # - Own images (ghcr.io/fidonis/...): a finding with a fix is fixed in the
-#   image. An entry is the exception for a fix that cannot be taken in the
-#   image (it lives only in vendored upstream code); it runs at most 90 days.
-#   The same form holds for the CI tool set.
+#   image, also when it lives in vendored upstream code (the wiki image raises
+#   such packages through mediawiki/image/core-vendor.lock). An entry is the
+#   exception for a fix that cannot be taken in the image at all; it runs at
+#   most 90 days. The same form holds for the CI tool set.
 # - Third-party images: an entry is allowed only while the distribution ships
 #   the fixed package and the upstream image is not rebuilt yet. It names the
 #   pinned digest and runs at most 14 days. The reason names the tag checked
@@ -5362,15 +5363,6 @@ exceptions:
     added: 2026-11-25
     expires: 2026-12-09
     approved_by: ISB, Fidonis GmbH, 2026-11-25
-  - id: CVE-2026-109413
-    package: symfony/yaml
-    image: ghcr.io/fidonis/papaia-mediawiki
-    severity: HIGH
-    reason: >-
-      symfony/yaml v5.4.52 (composer-vendor var/www/html/vendor/composer/installed.json) in ghcr.io/fidonis/papaia-mediawiki:1.43.11-1.0.2; fixed in 4.0.0, 5.1.0, 5.3.0, 6.2.0, 6.4.45, 7.3.0, 5.0.0, 5.4.54, 6.3.0, 7.1.0, 5.4.0, 6.1.0, 6.4.0, 7.2.0, 7.4.0, 7.4.18, 8.1.0, 3.0.0, 5.2.0, 8.1.6, but it ships in the vendor directory of MediaWiki core in the upstream base image docker.io/library/mediawiki:1.43.11, the newest 1.43 release; the image does not change upstream vendor code, and the next MediaWiki 1.43 release brings the fix. Resolved by moving the pin to an upstream build that carries the fix.
-    added: 2026-11-25
-    expires: 2027-02-22
-    approved_by: pending (security officer countersignature)
   - id: CVE-2025-47273
     package: setuptools
     image: ghcr.io/paperless-ngx/paperless-ngx

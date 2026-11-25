@@ -41,7 +41,7 @@ services:
   mediawiki:
     # <MediaWiki version>-<add-on version>: a new add-on version that changes
     # image/ publishes a new tag, so a cached image is never mistaken for it.
-    image: ${MEDIAWIKI_IMAGE:-127.0.0.1:57500/unpublished/papaia-mediawiki:1.43.11-1.0.2@sha256:36bc14f64ce5be03bd1e055f840d37f8086ca39e36853587664ca8eb56157426}
+    image: ${MEDIAWIKI_IMAGE:-127.0.0.1:57500/unpublished/papaia-mediawiki:1.43.11-1.0.3@sha256:aec04bc4f89db288974f8bcecbdabe2805c8b92539345317ecb550f7f1d6f36f}
     # Used when the image cannot be pulled: compose builds it from the
     # add-on's own Dockerfile instead (needs internet, takes minutes).
     build:

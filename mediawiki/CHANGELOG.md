@@ -5,6 +5,27 @@ format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the versions are the add-on's own `version` in `papaia-app.yaml`. Steps an
 operator has to do by hand are listed under `### Upgrade notes`.
 
+## [1.0.3] - 2026-11-25
+
+### Security
+- The wiki image `1.43.11-1.0.3` raises `symfony/yaml` in the vendor
+  directory of MediaWiki core from 5.4.52 to exactly 5.4.57, the newest 5.4
+  release (CVE-2026-109413, HIGH, fixed in 5.4.54). MediaWiki 1.43.11 is the
+  newest 1.43 release and ships 5.4.52, so the image takes the fix itself
+  instead of excepting it: `image/core-vendor.lock` holds the package entry
+  with its dist reference and archive checksum, and the build installs it
+  from there with Composer (no other repository, no dev packages, scripts or
+  plugins; Composer is removed in the same layer). Core's `composer.json`
+  names the same version, so update.php's check of the vendor directory
+  passes on every start. No other vendor package changes; `tests/image_contents.sh` checks that against the base image on
+  every image build. The exception entry for this finding is removed.
+- Until `1.43.11-1.0.3` is published, the default of `MEDIAWIKI_IMAGE` is its
+  signed release candidate from a local test registry.
+
+### Upgrade notes
+- Configuration, environment, ports, networks, user and the database volume
+  are unchanged; only the image changes.
+
 ## [1.0.2] - 2026-11-25
 
 ### Security

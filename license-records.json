@@ -1,4 +1,5 @@
 [
   {"name": "docker.io/library/mediawiki", "version": "1.43.11", "license": "GPL-2.0-or-later", "scope": "service", "ecosystem": "oci"},
-  {"name": "docker.io/library/composer", "version": "2.8.12", "license": "MIT", "scope": "build", "ecosystem": "oci"}
+  {"name": "docker.io/library/composer", "version": "2.8.12", "license": "MIT", "scope": "build", "ecosystem": "oci"},
+  {"name": "symfony/yaml", "version": "5.4.57", "license": "MIT", "scope": "service", "ecosystem": "composer"}
 ]

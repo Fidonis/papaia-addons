@@ -55,7 +55,7 @@ papaia-addons/
 │   └── test_*.py              # Unit tests for the tools
 ├── security/exceptions.yaml   # Accepted findings with a fix, each with reason and expiry (third-party: digest, ≤ 14 days; own: ≤ 90 days)
 ├── vendor/papaia-kit/         # The papaia-kit release wheel CI uses, with its LICENSE (MIT); kit.lock pins it
-├── license-records.json       # License records of the base images the mediawiki image is built from
+├── license-records.json       # License records of the base images and raised vendor packages of the mediawiki image
 ├── license-exceptions.toml    # License exceptions (papaia-kit format), see "Licenses" below
 ├── commit-boundary.toml       # Start commit of the commit metadata check (papaia-kit format), see "Continuous integration" below
 ├── CHANGELOG.md
@@ -201,7 +201,7 @@ shellcheck --severity=warning <script>
 | Component versions | `components.py check`, `image_refs.py check`, the unit tests of `tools/`; on `main` and pull requests into it also `image_refs.py release` and `release_line.py` (no pending exception entry) |
 | Scan gate self test | The seeded report with a CRITICAL and a HIGH finding with a fix (`tools/fixtures/scan/seeded-fixable.json`) must fail `scan_gate.py`; the seeded report with findings without a fix (`seeded-no-fix.json`) must pass and give two lines of `no-fix.txt` |
 | Manifest conformance | `papaia-kit conformance manifest` for every manifest with `exposes:`, with its compose file |
-| License check | `papaia-kit licenses check` over the CI tool set (`tools/ci/uv.lock`, build scope) and the base images in `license-records.json` |
+| License check | `papaia-kit licenses check` over the CI tool set (`tools/ci/uv.lock`, build scope) and the base images and raised vendor packages in `license-records.json` |
 | Word check and commit metadata | Denied terms of papaia-kit in the lines the change adds (`word_check.py`), counted from the merge base; author, committer, sign-off and wording of its commits (`papaia-kit repo commits`), from the start boundary in `commit-boundary.toml` on |
 | Vulnerability scan | Trivy over every pinned image default of the delivered add-ons (`image_refs.py list`), each for `linux/amd64` and `linux/arm64`, and over the CI tool set (`tools/ci/uv.lock`), each through `scan_gate.py`; nightly too, so a new CRITICAL or HIGH finding with a fix fails the scheduled run. See "Vulnerability scan" below |
 | Secret scan (full history) | gitleaks, pinned by version and sha256, over every commit; `.gitleaks.toml` allows only the pinned extension commits of the mediawiki image build |
@@ -228,7 +228,7 @@ The rule holds for every image the repository scans: the pinned image defaults o
 
 **Exceptions.** Every entry names id, package, image, severity, reason, `added`, `expires` and `approved_by`; nothing is waived while `approved_by` starts with `pending`.
 
-- Own images (`ghcr.io/fidonis/...`) and the CI tool set: a finding with a fix is fixed in the image. An entry is the exception for a fix that cannot be taken there (it lives in vendored upstream code) and expires at most 90 days after `added`.
+- Own images (`ghcr.io/fidonis/...`) and the CI tool set: a finding with a fix is fixed in the image, also when it lives in vendored upstream code: the wiki image raises such packages of the MediaWiki core vendor directory to the fixed release through `mediawiki/image/core-vendor.lock` (exact version and archive checksum, nothing else upgraded). An entry is the exception for a fix that cannot be taken in the image at all and expires at most 90 days after `added`.
 - Third-party images: an entry is allowed only while the distribution ships the fixed package and the upstream image is not rebuilt yet. It names the pinned image index as `digest: sha256:…`, covers a scan of exactly that digest and expires at most 14 days after `added`; the reason names the tag checked and the digest it pointed to on that date. The gate refuses an entry without a digest, with a longer term, or for a digest that no add-on default pins any more (re-check it against the scan of the new pin). Moving a pin does not extend `expires`. While such entries exist, a maintainer checks at least once a week whether the tag points to a new digest and re-pins within three working days.
 - The security officer countersigns each entry (`approved_by`). A CRITICAL finding without a fix that is listed as actively exploited goes to the security officer within two working days, not to the monthly review.
 
@@ -243,7 +243,7 @@ The rule holds for every image the repository scans: the pinned image defaults o
 
 ### Licenses
 
-The policy is the one of papaia-kit. This repository builds one image, `papaia-mediawiki`, which is MediaWiki itself: the upstream image `docker.io/library/mediawiki` (GPL-2.0-or-later) with extensions fetched at pinned commits and configuration. It runs as its own container and is reached over HTTP only, so the policy's service scope applies, where GPL needs an exception whose obligations are met: upstream code stays unmodified and `mediawiki/image/Dockerfile` names the upstream image and every extension commit, so the corresponding source stays available. `license-exceptions.toml` records this decision; `license-records.json` lists the base images (Composer runs in the build stage only). Exceptions expire and are renewed with a new review.
+The policy is the one of papaia-kit. This repository builds one image, `papaia-mediawiki`, which is MediaWiki itself: the upstream image `docker.io/library/mediawiki` (GPL-2.0-or-later) with extensions fetched at pinned commits and configuration. It runs as its own container and is reached over HTTP only, so the policy's service scope applies, where GPL needs an exception whose obligations are met: upstream code stays unmodified apart from vendor packages raised to a published fixed release, and `mediawiki/image/Dockerfile` names the upstream image and every extension commit and `mediawiki/image/core-vendor.lock` every such package, so the corresponding source stays available. `license-exceptions.toml` records this decision; `license-records.json` lists the base images and the raised vendor packages (Composer runs in the build stage only). Exceptions expire and are renewed with a new review.
 
 ---
 

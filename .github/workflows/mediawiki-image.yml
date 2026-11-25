@@ -10,8 +10,9 @@ name: mediawiki image
 #   previous tag only while the new one is not published yet. On a milestone
 #   the default may instead name the signed candidate of the new tag from a
 #   local test registry; main and pull requests into it refuse that.
-# - test (pull requests and pushes): builds linux/amd64 and linux/arm64 and
-#   scans each build with Trivy; tools/scan_gate.py fails on CRITICAL or HIGH
+# - test (pull requests and pushes): builds linux/amd64 and linux/arm64,
+#   checks the contents of each build (mediawiki/tests/image_contents.sh)
+#   and scans it with Trivy; tools/scan_gate.py fails on CRITICAL or HIGH
 #   findings with a fix (exceptions: security/exceptions.yaml). The
 #   access-tier checks run against the amd64 build (they start the stack,
 #   which under emulation would take most of the job's time). A seeded
@@ -181,6 +182,13 @@ jobs:
           load: true
           tags: ${{ env.IMAGE }}:${{ needs.check.outputs.tag }}
           labels: de.fidonis.platform-kit=${{ needs.check.outputs.kit }}
+      # Pinned core vendor packages (image/core-vendor.lock) at their version,
+      # no other vendor package changed against the base image, YAML parsing
+      # and `maintenance/run.php Version`; on both platforms.
+      - name: Image contents
+        env:
+          TAG: ${{ needs.check.outputs.tag }}
+        run: mediawiki/tests/image_contents.sh "$IMAGE:$TAG"
       - name: Access-tier checks
         if: matrix.platform == 'linux/amd64'
         run: mediawiki/tests/run.sh

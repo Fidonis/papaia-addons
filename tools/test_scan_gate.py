@@ -491,6 +491,25 @@ class RepositoryEntryFormTest(GateCase):
         stale = [key for key, reason in REASONS.items() if "no fixed version" in reason]
         self.assertEqual(stale, [])
 
+    def test_no_entry_waives_a_finding_of_the_mediawiki_image(self) -> None:
+        # Condition M1 of the security officer: a finding with a fix in the
+        # wiki image is fixed in the image, never excepted. Findings without a
+        # fix take no entry, so the image has none at all.
+        covered = [
+            f"{item.vuln_id} {item.package}"
+            for item in scan_gate.load_exceptions(REPO_EXCEPTIONS)
+            if item.image == IMAGE
+        ]
+        self.assertEqual(covered, [])
+
+    def test_no_own_image_entry_covers_a_finding_with_a_fix(self) -> None:
+        fixable = [
+            f"{image} {vid} {package}"
+            for (image, vid, package, _), reason in REASONS.items()
+            if image.startswith("ghcr.io/fidonis/") and re.search(r"\bfixed in\b", reason)
+        ]
+        self.assertEqual(fixable, [])
+
     def test_third_party_entry_of_fifteen_days_or_without_digest_is_refused(self) -> None:
         for raw in (third_party_entry(expires=datetime.date(2026, 12, 5)), third_party_entry(digest=None)):
             with self.subTest(entry=raw), self.assertRaises(scan_gate.GateError):

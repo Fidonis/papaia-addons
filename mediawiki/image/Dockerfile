@@ -53,8 +53,30 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ARG DEBIAN_SECURITY_UPGRADES="\
 libzstd1=1.5.7+dfsg-1+deb13u1"
 
-# hadolint ignore=DL3008
-RUN apt-get update \
+# PHP packages of the vendor directory of MediaWiki core (/var/www/html/vendor)
+# with a published security fix that the MediaWiki release does not ship yet,
+# each raised to exactly the fixed version (no other package is upgraded).
+# One comment line per pin names the package, the version and the advisory
+# it fixes; the entry itself (version, dist reference and sha1 checksum of the
+# archive) is in core-vendor.lock, which tools/test_mediawiki_image.py holds
+# to this list:
+#
+#   symfony/yaml  v5.4.57  CVE-2026-109413
+#
+# Composer installs the entries from that file alone: packagist is switched
+# off for the vendor directory, so an entry cannot resolve to anything else,
+# and the archive is checked against its checksum. Only the pinned packages
+# may change (`composer update <names>` without -w); a pin that needs another
+# package changed fails the build. No dev packages, scripts or plugins.
+# vendor/composer.json and composer.lock keep the result, so the installed
+# set stays reviewable in the image. Core's own composer.json names the same
+# exact versions, which MediaWiki's update.php checks the vendor directory
+# against (checkComposerLockUpToDate). Drop a line (and its entry) once the
+# MediaWiki release ships that version or a newer one.
+# PHP code in single quotes is meant to reach php unexpanded (SC2016).
+# hadolint ignore=DL3008,SC2016
+RUN --mount=type=bind,source=core-vendor.lock,target=/tmp/core-vendor.lock \
+    apt-get update \
     && read -r -a upgrades <<< "$DEBIAN_SECURITY_UPGRADES" \
     && apt-get install -y --no-install-recommends --only-upgrade "${upgrades[@]}" \
     && apt-get install -y --no-install-recommends git unzip \
@@ -72,6 +94,15 @@ RUN apt-get update \
          COMPOSER_ALLOW_SUPERUSER=1 composer install --working-dir="extensions/$ext" \
            --no-dev --no-interaction --no-progress --optimize-autoloader || exit 1; \
        done \
+    && export COMPOSER_ALLOW_SUPERUSER=1 \
+    && pins="$(php -r '$l = json_decode(file_get_contents($argv[1]), true, 512, JSON_THROW_ON_ERROR); foreach ($l["packages"] as $p) { echo $p["name"], ":", ltrim($p["version"], "v"), " "; }' /tmp/core-vendor.lock)" \
+    && repo="$(php -r '$l = json_decode(file_get_contents($argv[1]), true, 512, JSON_THROW_ON_ERROR); echo json_encode(["type" => "package", "package" => $l["packages"]], JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);' /tmp/core-vendor.lock)" \
+    && read -r -a pins <<< "$pins" \
+    && composer config --working-dir=vendor --no-plugins repositories.packagist.org false \
+    && composer config --working-dir=vendor --no-plugins repositories.papaia-core-vendor "$repo" \
+    && composer require --working-dir=vendor --no-plugins --no-scripts --no-update "${pins[@]}" \
+    && composer update --working-dir=vendor --no-dev --no-scripts --no-plugins --no-audit --prefer-dist --no-interaction --no-progress "${pins[@]%%:*}" \
+    && composer require --no-plugins --no-scripts --no-update "${pins[@]}" \
     && rm /usr/local/bin/composer \
     && apt-get purge -y --auto-remove git unzip \
     && rm -rf /var/lib/apt/lists/* /root/.composer

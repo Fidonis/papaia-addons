@@ -45,6 +45,15 @@ based on merged pull requests; this file mirrors the published releases.
   holds the image's Debian security pins to exact `--only-upgrade` versions,
   each named next to its advisory.
 
+- **Wiki image `1.43.11-1.0.3`** (`mediawiki` 1.0.3, unreleased): raises
+  `symfony/yaml` in the vendor directory of MediaWiki core to exactly 5.4.57
+  (CVE-2026-109413, HIGH), installed from the committed
+  `mediawiki/image/core-vendor.lock` with its archive checksum; no other
+  vendor package changes. The exception entry for this finding is removed, so
+  no entry waives a finding of an own image that has a fix. The image test
+  job checks the built contents on both platforms
+  (`mediawiki/tests/image_contents.sh`).
+
 ### Changed
 - **CI tool set on the final papaia-kit 0.1.0**, the kit's first release
   (MIT license). `vendor/papaia-kit/0.1.0/` holds the release wheel and its

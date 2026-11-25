@@ -1,0 +1,86 @@
+{
+    "_readme": [
+        "Exact upgrades of packages in the vendor directory of MediaWiki core",
+        "(/var/www/html/vendor) that the base image does not carry in a fixed",
+        "version yet, in the package form of composer.lock. mediawiki/image/Dockerfile",
+        "installs each entry from this file alone (no other repository) and Composer",
+        "checks the dist archive against its sha1 `shasum`. The comment block above",
+        "that step names each package, version and advisory."
+    ],
+    "packages": [
+        {
+            "name": "symfony/yaml",
+            "version": "v5.4.57",
+            "dist": {
+                "type": "zip",
+                "url": "https://api.github.com/repos/symfony/yaml/zipball/73f95622dbbab664af9db510424f267807bd1080",
+                "reference": "73f95622dbbab664af9db510424f267807bd1080",
+                "shasum": "fdb998756f81319a8807f1e205ed454fd280242f"
+            },
+            "require": {
+                "php": ">=7.2.5",
+                "symfony/deprecation-contracts": "^2.1|^3",
+                "symfony/polyfill-ctype": "^1.8"
+            },
+            "conflict": {
+                "symfony/console": "<5.3"
+            },
+            "require-dev": {
+                "symfony/console": "^5.3|^6.0"
+            },
+            "suggest": {
+                "symfony/console": "For validating YAML files using the lint command"
+            },
+            "bin": [
+                "Resources/bin/yaml-lint"
+            ],
+            "type": "library",
+            "autoload": {
+                "psr-4": {
+                    "Symfony\\Component\\Yaml\\": ""
+                },
+                "exclude-from-classmap": [
+                    "/Tests/"
+                ]
+            },
+            "notification-url": "https://packagist.org/downloads/",
+            "license": [
+                "MIT"
+            ],
+            "authors": [
+                {
+                    "name": "Fabien Potencier",
+                    "email": "fabien@symfony.com"
+                },
+                {
+                    "name": "Symfony Community",
+                    "homepage": "https://symfony.com/contributors"
+                }
+            ],
+            "description": "Loads and dumps YAML files",
+            "homepage": "https://symfony.com",
+            "support": {
+                "source": "https://github.com/symfony/yaml/tree/v5.4.57"
+            },
+            "funding": [
+                {
+                    "url": "https://symfony.com/sponsor",
+                    "type": "custom"
+                },
+                {
+                    "url": "https://github.com/fabpot",
+                    "type": "github"
+                },
+                {
+                    "url": "https://github.com/nicolas-grekas",
+                    "type": "github"
+                },
+                {
+                    "url": "https://tidelift.com/funding/github/packagist/symfony/symfony",
+                    "type": "tidelift"
+                }
+            ],
+            "time": "2026-11-05T16:36:45+00:00"
+        }
+    ]
+}

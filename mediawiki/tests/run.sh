@@ -11,10 +11,13 @@
 #
 #   tests/run.sh [--port=18020] [--keep]
 #
-# The image is the one docker-compose.yml names (MEDIAWIKI_IMAGE), built from
-# image/ when it is not present locally. Run it after every change to the
-# tier hooks in runtime/LocalSettings.php and after a MediaWiki or extension
-# bump.
+# The image is MEDIAWIKI_IMAGE from the environment, else the default
+# docker-compose.yml names. A reference without a digest is built from image/
+# when it is not present locally; a digest-pinned default must be pullable,
+# because a local build never carries that digest. To test a local build,
+# pass its tag: MEDIAWIKI_IMAGE=<tag> tests/run.sh. Run it after every change
+# to the tier hooks in runtime/LocalSettings.php and after a MediaWiki or
+# extension bump.
 # ═══════════════════════════════════════════════════════════════════════════
 set -euo pipefail
 

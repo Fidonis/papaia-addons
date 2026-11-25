@@ -590,8 +590,11 @@ No response may carry a marker. The member and the break-glass admin are
 positive controls. Everything is removed afterwards.
 
 The `mediawiki-image` workflow runs it on every change to the add-on, before
-an image is published. Run it after changing the tier hooks in
-`runtime/LocalSettings.php` and after bumping MediaWiki or an extension;
+an image is published, against the image it has just built
+(`MEDIAWIKI_IMAGE=<that tag>`). The compose default is pinned by digest, so a
+local build of `image/` is tested by passing its tag the same way. Run it
+after changing the tier hooks in `runtime/LocalSettings.php` and after
+bumping MediaWiki or an extension;
 Dependabot proposes base-image bumps, the extension commits in
 `image/Dockerfile` are updated by hand.
 

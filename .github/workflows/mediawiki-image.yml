@@ -189,8 +189,14 @@ jobs:
         env:
           TAG: ${{ needs.check.outputs.tag }}
         run: mediawiki/tests/image_contents.sh "$IMAGE:$TAG"
+      # Against this build, not the compose default: the default is pinned by
+      # digest (a published tag, or a candidate in a local test registry the
+      # runner cannot reach), and compose's build fallback cannot produce an
+      # image under a digest reference.
       - name: Access-tier checks
         if: matrix.platform == 'linux/amd64'
+        env:
+          MEDIAWIKI_IMAGE: ${{ env.IMAGE }}:${{ needs.check.outputs.tag }}
         run: mediawiki/tests/run.sh
       - name: Report file name
         id: name
@@ -210,8 +216,10 @@ jobs:
       - name: Gate self test (seeded critical finding must fail)
         run: |
           set -uo pipefail
-          uv run --locked python tools/scan_gate.py tools/fixtures/scan/seeded-critical.json >/dev/null 2>&1
-          status=$?
+          # The runner starts this step with bash -e; capture the expected
+          # non-zero exit instead of letting it end the step.
+          status=0
+          uv run --locked python tools/scan_gate.py tools/fixtures/scan/seeded-critical.json >/dev/null 2>&1 || status=$?
           if [[ $status -ne 1 ]]; then echo "::error::scan gate passed a seeded critical finding (exit $status)"; exit 1; fi
           echo "seeded critical finding rejected as expected"
       - name: Gate

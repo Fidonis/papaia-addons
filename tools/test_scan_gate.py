@@ -17,9 +17,15 @@ import scan_gate
 
 HERE = Path(__file__).resolve().parent
 SEEDED = HERE / "fixtures" / "scan" / "seeded-critical.json"
+SEEDED_FIXABLE = HERE / "fixtures" / "scan" / "seeded-fixable.json"
+SEEDED_NO_FIX = HERE / "fixtures" / "scan" / "seeded-no-fix.json"
 REPO_EXCEPTIONS = HERE.parent / "security" / "exceptions.yaml"
 TODAY = "2026-11-21"
 IMAGE = "ghcr.io/fidonis/papaia-mediawiki"
+THIRD_PARTY = "docker.io/library/postgres"
+DIGEST = "sha256:" + "c" * 64
+OTHER_DIGEST = "sha256:" + "d" * 64
+THIRD_PARTY_REF = f"{THIRD_PARTY}:18.7@{DIGEST}"
 PENDING_APPROVAL = re.compile(r"^pending \([^()<>]+\)$", re.IGNORECASE)
 # A role (optionally with name or date), not the `<role that countersigned>` placeholder.
 COUNTERSIGNED = re.compile(r"^[A-Za-z][^<>]*$")
@@ -69,6 +75,35 @@ def entry(**overrides: object) -> dict:
     return base
 
 
+def third_party_entry(**overrides: object) -> dict:
+    """An approved 14-day entry for a fixable finding of a third-party image."""
+    base = entry(
+        image=THIRD_PARTY,
+        digest=DIGEST,
+        reason="Distribution fix available, the upstream image is not rebuilt yet.",
+        added=datetime.date(2026, 11, 20),
+        expires=datetime.date(2026, 12, 4),
+    )
+    # Field order of the committed file: digest right after image.
+    ordered = {k: base[k] for k in ("id", "package", "image", "digest")}
+    ordered.update({k: v for k, v in base.items() if k not in ordered})
+    ordered.update(overrides)
+    return {k: v for k, v in ordered.items() if v is not None}
+
+
+def pinning_root(base: Path, *refs: str) -> Path:
+    """A repository root whose only add-on pins `refs` as image defaults."""
+    root = base / "pins"
+    addon = root / "demo"
+    addon.mkdir(parents=True, exist_ok=True)
+    (addon / "papaia-app.yaml").write_text("name: demo\nversion: 1.0.0\n", encoding="utf-8")
+    services = "".join(
+        f"  s{n}:\n    image: ${{S{n}_IMAGE:-{ref}}}\n" for n, ref in enumerate(refs)
+    )
+    (addon / "docker-compose.yml").write_text(f"services:\n{services}", encoding="utf-8")
+    return root
+
+
 def review_problems(raw: dict) -> list[str]:
     """Problems with the review state of one raw exception entry.
 
@@ -94,6 +129,10 @@ def review_problems(raw: dict) -> list[str]:
         problems.append("expires before it was added")
     elif (expires - added).days > scan_gate.MAX_DAYS:
         problems.append(f"valid for more than {scan_gate.MAX_DAYS} days")
+    elif isinstance(raw.get("image"), str) and scan_gate.is_third_party(raw["image"]) and (
+        (expires - added).days > scan_gate.THIRD_PARTY_MAX_DAYS
+    ):
+        problems.append(f"third-party entry valid for more than {scan_gate.THIRD_PARTY_MAX_DAYS} days")
     return problems
 
 
@@ -154,9 +193,18 @@ class GateCase(unittest.TestCase):
         path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
         return path
 
-    def run_gate(self, report_path: Path, exceptions: Path | None = None) -> tuple[int, str, str]:
+    def run_gate(
+        self,
+        report_path: Path,
+        exceptions: Path | None = None,
+        *extra: str,
+        root: Path | None = None,
+    ) -> tuple[int, str, str]:
         argv = [str(report_path), "--today", TODAY]
         argv += ["--exceptions", str(exceptions or self.write_exceptions([]))]
+        if root is not None:
+            argv += ["--root", str(root)]
+        argv += list(extra)
         out, err = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             code = scan_gate.main(argv)
@@ -174,6 +222,282 @@ class SeededCriticalTest(GateCase):
     def test_seeded_report_fails_against_the_repository_exceptions(self) -> None:
         code, _, _ = self.run_gate(SEEDED, REPO_EXCEPTIONS)
         self.assertEqual(code, 1)
+
+
+class SeededFixtureTest(GateCase):
+    """The fixtures the CI self test runs through the gate on every pull request."""
+
+    def test_seeded_fixable_critical_and_high_fail_and_are_named(self) -> None:
+        code, _, err = self.run_gate(SEEDED_FIXABLE, REPO_EXCEPTIONS)
+        self.assertEqual(code, 1)
+        for name in ("CVE-2099-0011", "seeded-fixable-critical-lib", "CVE-2099-0012", "seeded-fixable-high-lib"):
+            self.assertIn(name, err)
+        self.assertIn("2 failing", self.run_gate(SEEDED_FIXABLE)[1])
+
+    def test_seeded_findings_without_fix_pass_and_are_reported(self) -> None:
+        no_fix = self.tmp / "no-fix.txt"
+        code, out, err = self.run_gate(
+            SEEDED_NO_FIX, REPO_EXCEPTIONS, "--no-fix", str(no_fix), "--platform", "linux/arm64"
+        )
+        self.assertEqual(code, 0, err)
+        artifact = "ghcr.io/fidonis/papaia-mediawiki:1.43.11-1.0.0"
+        self.assertEqual(
+            no_fix.read_text(encoding="utf-8").splitlines(),
+            [
+                f"{artifact}\tlinux/arm64\tCVE-2099-0021\tseeded-no-fix-critical-lib\t1.0.0-1\tCRITICAL",
+                f"{artifact}\tlinux/arm64\tCVE-2099-0022\tseeded-no-fix-high-lib\t4.0.0-1\tHIGH",
+            ],
+        )
+        for name in ("CVE-2099-0021", "seeded-no-fix-critical-lib", "CVE-2099-0022", "seeded-no-fix-high-lib"):
+            self.assertIn(name, out)
+        self.assertIn("2 without fix", out)
+
+    def test_ci_runs_the_seeded_fixtures_on_every_pull_request(self) -> None:
+        import yaml
+
+        workflow = yaml.safe_load((HERE.parent / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"))
+        triggers = workflow.get("on", workflow.get(True))
+        self.assertIn("pull_request", triggers)
+        steps = workflow["jobs"]["scan-gate"]["steps"]
+        script = "\n".join(str(step.get("run", "")) for step in steps)
+        self.assertIn("tools/fixtures/scan/seeded-fixable.json", script)
+        self.assertIn("tools/fixtures/scan/seeded-no-fix.json", script)
+        self.assertNotIn("if", workflow["jobs"]["scan-gate"])
+
+
+class NoFixReportTest(GateCase):
+    def test_no_fix_list_holds_critical_and_high_without_fix_only(self) -> None:
+        no_fix = self.tmp / "no-fix.txt"
+        data = report(
+            vuln("CVE-2099-1", "liba", "CRITICAL", fixed=None),
+            vuln("CVE-2099-2", "libb", "HIGH", fixed=""),
+            vuln("CVE-2099-3", "libc", "MEDIUM", fixed=None),
+            vuln("CVE-2099-4", "libd", "LOW", fixed=None),
+            artifact=THIRD_PARTY_REF,
+        )
+        code, _, _ = self.run_gate(
+            self.write_report(data), None, "--no-fix", str(no_fix), "--platform", "linux/amd64"
+        )
+        self.assertEqual(code, 0)
+        lines = no_fix.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(
+            lines,
+            [
+                f"{THIRD_PARTY_REF}\tlinux/amd64\tCVE-2099-1\tliba\t1.0.0\tCRITICAL",
+                f"{THIRD_PARTY_REF}\tlinux/amd64\tCVE-2099-2\tlibb\t1.0.0\tHIGH",
+            ],
+        )
+
+    def test_no_fix_list_is_written_when_empty_and_platform_defaults_to_a_dash(self) -> None:
+        no_fix = self.tmp / "no-fix.txt"
+        no_fix.write_text("stale\n", encoding="utf-8")
+        code, _, _ = self.run_gate(self.write_report(report()), None, "--no-fix", str(no_fix))
+        self.assertEqual(code, 0)
+        self.assertEqual(no_fix.read_text(encoding="utf-8"), "")
+        self.run_gate(self.write_report(report(vuln(fixed=None))), None, "--no-fix", str(no_fix))
+        self.assertIn("\t-\tCVE-2099-1000\t", no_fix.read_text(encoding="utf-8"))
+
+    def test_no_fix_list_is_written_when_the_gate_fails(self) -> None:
+        no_fix = self.tmp / "no-fix.txt"
+        data = report(vuln(), vuln("CVE-2099-2", fixed=None))
+        code, _, _ = self.run_gate(self.write_report(data), None, "--no-fix", str(no_fix))
+        self.assertEqual(code, 1)
+        self.assertIn("CVE-2099-2", no_fix.read_text(encoding="utf-8"))
+
+    def test_summary_gets_the_counts_per_image(self) -> None:
+        summary = self.tmp / "summary.md"
+        summary.write_text("earlier step\n", encoding="utf-8")
+        data = report(
+            vuln("CVE-2099-1", fixed="2"),
+            vuln("CVE-2099-1000"),
+            vuln("CVE-2099-3", fixed=None),
+            vuln("CVE-2099-4", severity="CRITICAL", fixed=None),
+        )
+        code, _, _ = self.run_gate(
+            self.write_report(data), self.write_exceptions([entry()]),
+            "--summary", str(summary), "--platform", "linux/arm64",
+        )
+        self.assertEqual(code, 1)
+        text = summary.read_text(encoding="utf-8")
+        self.assertTrue(text.startswith("earlier step\n"))
+        self.assertIn("| Image | Platform | Failing | Excepted | Without fix |", text)
+        self.assertIn(f"| `{IMAGE}:1.43.11-1.0.0` | linux/arm64 | 1 | 1 | 2 |", text)
+
+    def test_titles_and_descriptions_are_not_printed(self) -> None:
+        found = vuln(fixed=None)
+        found["Title"] = "title-text-from-the-report"
+        found["Description"] = "description-text-from-the-report"
+        no_fix, summary = self.tmp / "no-fix.txt", self.tmp / "summary.md"
+        _, out, err = self.run_gate(
+            self.write_report(report(found, vuln("CVE-2099-2"))), None,
+            "--no-fix", str(no_fix), "--summary", str(summary),
+        )
+        for text in (out, err, no_fix.read_text(encoding="utf-8"), summary.read_text(encoding="utf-8")):
+            self.assertNotIn("title-text", text)
+            self.assertNotIn("description-text", text)
+
+    def test_markup_in_the_artifact_name_does_not_reach_the_summary_table(self) -> None:
+        summary = self.tmp / "summary.md"
+        self.run_gate(
+            self.write_report(report(artifact="demo|`x`\n| row")), None, "--summary", str(summary)
+        )
+        row = summary.read_text(encoding="utf-8").splitlines()[-1]
+        self.assertEqual(row.count("|"), 6, row)
+        self.assertNotIn("`x`", row)
+
+    def test_invalid_platform_is_refused(self) -> None:
+        for platform in ("amd64", "linux/amd64; rm", "", "linux/" + "a" * 80):
+            with self.subTest(platform=platform):
+                code, _, _ = self.run_gate(self.write_report(report()), None, "--platform", platform)
+                self.assertEqual(code, 2)
+
+    def test_scan_workflows_keep_report_and_no_fix_list_for_ninety_days(self) -> None:
+        import yaml
+
+        root = HERE.parent / ".github" / "workflows"
+        for name, job in (("ci.yml", "vulnerability"), ("ci.yml", "vulnerability-tools"), ("mediawiki-image.yml", "test")):
+            with self.subTest(workflow=name, job=job):
+                steps = yaml.safe_load((root / name).read_text(encoding="utf-8"))["jobs"][job]["steps"]
+                gate = [s for s in steps if "scan_gate.py" in str(s.get("run", "")) and "fixtures" not in str(s.get("run", ""))]
+                self.assertEqual(len(gate), 1)
+                self.assertIn("--no-fix", gate[0]["run"])
+                self.assertIn("--summary", gate[0]["run"])
+                self.assertIn("GITHUB_STEP_SUMMARY", gate[0]["run"])
+                uploads = [s for s in steps if str(s.get("uses", "")).startswith("actions/upload-artifact@")]
+                self.assertEqual(len(uploads), 1)
+                self.assertGreater(steps.index(uploads[0]), steps.index(gate[0]))
+                self.assertEqual(uploads[0]["if"], "always()")
+                self.assertEqual(uploads[0]["with"]["retention-days"], 90)
+                self.assertIn("no-fix", str(uploads[0]["with"]["path"]))
+                scans = [s for s in steps if str(s.get("uses", "")).startswith("aquasecurity/trivy-action@")]
+                for scan in scans:
+                    options = scan["with"]
+                    self.assertNotIn("ignore-unfixed", options)
+                    self.assertNotIn("severity", options)
+                    self.assertEqual(options["format"], "json")
+
+
+class ThirdPartyEntryTest(GateCase):
+    """A fixable finding of a third-party image: digest-scoped entry, at most 14 days."""
+
+    def gate(self, data: dict, entries: list[dict], *pins: str) -> tuple[int, str, str]:
+        root = pinning_root(self.tmp, *(pins or (THIRD_PARTY_REF,)))
+        return self.run_gate(self.write_report(data), self.write_exceptions(entries), root=root)
+
+    def test_fourteen_day_entry_with_the_scanned_digest_waives_exactly_that_finding(self) -> None:
+        code, out, err = self.gate(report(vuln(), artifact=THIRD_PARTY_REF), [third_party_entry()])
+        self.assertEqual(code, 0, err)
+        self.assertIn("1 excepted", out)
+        data = report(vuln(), vuln(pkg="libother"), vuln("CVE-2099-2"), artifact=THIRD_PARTY_REF)
+        code, out, err = self.gate(data, [third_party_entry()])
+        self.assertEqual(code, 1)
+        self.assertIn("1 excepted", out)
+        self.assertIn("2 failing", out)
+        self.assertIn("libother", err)
+        self.assertIn("CVE-2099-2", err)
+
+    def test_fifteen_days_are_refused(self) -> None:
+        code, _, err = self.gate(
+            report(vuln(), artifact=THIRD_PARTY_REF),
+            [third_party_entry(expires=datetime.date(2026, 12, 5))],
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("14 days", err)
+
+    def test_missing_digest_is_refused(self) -> None:
+        code, _, err = self.gate(
+            report(vuln(), artifact=THIRD_PARTY_REF), [third_party_entry(digest=None)]
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("digest", err)
+
+    def test_malformed_digest_is_refused(self) -> None:
+        for digest in ("sha256:abc", "c" * 64, "sha256:" + "C" * 64, 5):
+            with self.subTest(digest=digest):
+                code, _, _ = self.gate(report(artifact=THIRD_PARTY_REF), [third_party_entry(digest=digest)])
+                self.assertEqual(code, 2)
+
+    def test_another_digest_waives_nothing(self) -> None:
+        other = f"{THIRD_PARTY}:18.7@{OTHER_DIGEST}"
+        code, _, err = self.gate(report(vuln(), artifact=other), [third_party_entry()], THIRD_PARTY_REF)
+        self.assertEqual(code, 1)
+        self.assertIn("CVE-2099-1000", err)
+        # A scan without a digest cannot match a digest-scoped entry either.
+        code, _, _ = self.gate(report(vuln(), artifact=f"{THIRD_PARTY}:18.7"), [third_party_entry()])
+        self.assertEqual(code, 1)
+
+    def test_entry_for_a_digest_no_longer_pinned_is_refused(self) -> None:
+        code, _, err = self.gate(
+            report(artifact=THIRD_PARTY_REF), [third_party_entry()], f"{THIRD_PARTY}:18.7@{OTHER_DIGEST}"
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("no longer pinned", err)
+        self.assertIn(DIGEST, err)
+
+    def test_expired_entry_fails_the_run(self) -> None:
+        code, _, err = self.gate(
+            report(artifact=THIRD_PARTY_REF),
+            [third_party_entry(added=datetime.date(2026, 11, 1), expires=datetime.date(2026, 11, 15))],
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("expired", err)
+
+    def test_entry_for_a_finding_without_fix_waives_nothing(self) -> None:
+        code, out, _ = self.gate(report(vuln(fixed=None), artifact=THIRD_PARTY_REF), [third_party_entry()])
+        self.assertEqual(code, 0)
+        self.assertIn("0 excepted", out)
+        self.assertIn("exception not needed (finding has no fix)", out)
+
+    def test_pending_entry_waives_nothing_on_a_milestone(self) -> None:
+        code, _, err = self.gate(
+            report(vuln(), artifact=THIRD_PARTY_REF),
+            [third_party_entry(approved_by="pending (security officer countersignature)")],
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("exception pending approval", err)
+
+    def test_own_images_keep_the_ninety_day_form_without_digest(self) -> None:
+        code, _, _ = self.gate(report(vuln()), [entry()])
+        self.assertEqual(code, 0)
+        code, _, err = self.gate(report(vuln()), [entry(digest=DIGEST)])
+        self.assertEqual(code, 2)
+        self.assertIn("digest", err)
+        for image in ("ghcr.io/fidonis/qdrant-mcp-rbac", scan_gate.TOOL_SET):
+            with self.subTest(image=image):
+                self.assertFalse(scan_gate.is_third_party(image))
+        for image in (THIRD_PARTY, "ghcr.io/paperless-ngx/paperless-ngx", "ghcr.io/fidonisx/demo"):
+            with self.subTest(image=image):
+                self.assertTrue(scan_gate.is_third_party(image))
+
+
+class RepositoryEntryFormTest(GateCase):
+    """The committed exception file under the new form."""
+
+    def test_committed_file_loads_and_names_pinned_digests_only(self) -> None:
+        import image_refs
+
+        entries = scan_gate.load_exceptions(REPO_EXCEPTIONS)
+        refs = image_refs.pinned_refs(image_refs.checked_addons(HERE.parent))
+        self.assertEqual(scan_gate.stale_digest_entries(entries, refs), [])
+
+    def test_committed_third_party_entries_are_digest_scoped_and_short(self) -> None:
+        for item in scan_gate.load_exceptions(REPO_EXCEPTIONS):
+            if scan_gate.is_third_party(item.image):
+                with self.subTest(id=item.vuln_id, package=item.package, image=item.image):
+                    self.assertRegex(item.digest, r"^sha256:[0-9a-f]{64}$")
+                    self.assertLessEqual((item.expires - item.added).days, scan_gate.THIRD_PARTY_MAX_DAYS)
+
+    def test_committed_file_has_no_entry_for_a_finding_without_fix(self) -> None:
+        stale = [key for key, reason in REASONS.items() if "no fixed version" in reason]
+        self.assertEqual(stale, [])
+
+    def test_third_party_entry_of_fifteen_days_or_without_digest_is_refused(self) -> None:
+        for raw in (third_party_entry(expires=datetime.date(2026, 12, 5)), third_party_entry(digest=None)):
+            with self.subTest(entry=raw), self.assertRaises(scan_gate.GateError):
+                scan_gate.load_exceptions(self.write_exceptions([raw]))
+
+    def test_seeded_critical_still_fails(self) -> None:
+        self.assertEqual(self.run_gate(SEEDED, REPO_EXCEPTIONS)[0], 1)
 
 
 class ThresholdTest(GateCase):
@@ -312,13 +636,16 @@ class ExceptionTest(GateCase):
         )
         self.assertEqual(code, 0)
 
-    def test_approved_exception_for_a_finding_without_fix_is_used(self) -> None:
+    def test_exception_for_a_finding_without_fix_is_not_needed_and_reported(self) -> None:
+        # Findings without a fix are listed in the report; an entry for one
+        # waives nothing and is reported for removal.
         code, out, _ = self.run_gate(
             self.write_report(report(vuln(fixed=None))), self.write_exceptions([entry()])
         )
         self.assertEqual(code, 0)
-        self.assertNotIn("unused", out)
-        self.assertIn("CVE-2099-1000", out)
+        self.assertIn("listed: HIGH CVE-2099-1000", out)
+        self.assertIn("exception not needed (finding has no fix): CVE-2099-1000 libdemo", out)
+        self.assertIn("0 excepted", out)
 
     def test_pending_exception_for_a_finding_without_fix_waives_nothing_and_passes(self) -> None:
         code, out, _ = self.run_gate(
@@ -339,7 +666,7 @@ class PinnedImageTest(GateCase):
 
     def test_entry_for_an_image_no_addon_pins_is_reported(self) -> None:
         entries = scan_gate.load_exceptions(
-            self.write_exceptions([entry(), entry(image="docker.io/library/gone")])
+            self.write_exceptions([entry(), third_party_entry(image="docker.io/library/gone")])
         )
         stale = scan_gate.unpinned_entries(entries, {IMAGE})
         self.assertEqual([item.image for item in stale], ["docker.io/library/gone"])

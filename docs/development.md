@@ -47,12 +47,13 @@ papaia-addons/
 │   ├── exposes.py             # Holds the `exposes:` section to the add-on directory; compares generation comments with the core
 │   ├── root_markdown.py       # Allows only README.md and CHANGELOG.md as Markdown files at the repository root
 │   ├── image_refs.py          # Every image default pinned by tag and digest
-│   ├── scan_gate.py           # Decides a Trivy report against security/exceptions.yaml
+│   ├── scan_gate.py           # Decides a Trivy report against security/exceptions.yaml; writes no-fix.txt and the step summary
+│   ├── release_line.py        # Refuses a release while an exception entry is pending
 │   ├── word_check.py          # Denied terms in the lines a revision range adds (papaia-kit term list)
 │   ├── ci/                    # pyproject.toml + uv.lock: the pinned Python tool set of CI, including papaia-kit
-│   ├── fixtures/              # Test inputs, e.g. the seeded critical scan report
+│   ├── fixtures/              # Test inputs, e.g. the seeded scan reports of the gate self test
 │   └── test_*.py              # Unit tests for the tools
-├── security/exceptions.yaml   # Accepted vulnerability findings, each with reason and expiry (≤ 90 days)
+├── security/exceptions.yaml   # Accepted findings with a fix, each with reason and expiry (third-party: digest, ≤ 14 days; own: ≤ 90 days)
 ├── vendor/papaia-kit/         # The papaia-kit release wheel CI uses, with its LICENSE (MIT); kit.lock pins it
 ├── license-records.json       # License records of the base images the mediawiki image is built from
 ├── license-exceptions.toml    # License exceptions (papaia-kit format), see "Licenses" below
@@ -197,22 +198,48 @@ shellcheck --severity=warning <script>
 | Job | What it checks |
 |---|---|
 | Yamllint, Shellcheck, Ruff, Hadolint | Lint; hadolint runs as a container pinned by digest over every tracked `Dockerfile` |
-| Component versions | `components.py check`, `image_refs.py check`, the unit tests of `tools/` |
+| Component versions | `components.py check`, `image_refs.py check`, the unit tests of `tools/`; on `main` and pull requests into it also `image_refs.py release` and `release_line.py` (no pending exception entry) |
+| Scan gate self test | The seeded report with a CRITICAL and a HIGH finding with a fix (`tools/fixtures/scan/seeded-fixable.json`) must fail `scan_gate.py`; the seeded report with findings without a fix (`seeded-no-fix.json`) must pass and give two lines of `no-fix.txt` |
 | Manifest conformance | `papaia-kit conformance manifest` for every manifest with `exposes:`, with its compose file |
 | License check | `papaia-kit licenses check` over the CI tool set (`tools/ci/uv.lock`, build scope) and the base images in `license-records.json` |
 | Word check and commit metadata | Denied terms of papaia-kit in the lines the change adds (`word_check.py`), counted from the merge base; author, committer, sign-off and wording of its commits (`papaia-kit repo commits`), from the start boundary in `commit-boundary.toml` on |
-| Vulnerability scan | Trivy over every pinned image default of the delivered add-ons (`image_refs.py list`), each for `linux/amd64` and `linux/arm64`, and over the CI tool set (`tools/ci/uv.lock`), each through `scan_gate.py`; nightly too, so a new CRITICAL finding with a fix fails the scheduled run |
+| Vulnerability scan | Trivy over every pinned image default of the delivered add-ons (`image_refs.py list`), each for `linux/amd64` and `linux/arm64`, and over the CI tool set (`tools/ci/uv.lock`), each through `scan_gate.py`; nightly too, so a new CRITICAL or HIGH finding with a fix fails the scheduled run. See "Vulnerability scan" below |
 | Secret scan (full history) | gitleaks, pinned by version and sha256, over every commit; `.gitleaks.toml` allows only the pinned extension commits of the mediawiki image build |
 | Conventional Commit PR title | The PR title |
 | mediawiki image: tag and pin | The compose default is a published tag with the digest the registry serves; a newer derived tag may be unpinned only while it is not published |
-| mediawiki image: build and scan | Build per platform (`linux/amd64`, `linux/arm64`), each scanned with Trivy through `scan_gate.py`; access-tier checks against the amd64 build; a seeded critical report must fail the gate |
+| mediawiki image: build and scan | Build per platform (`linux/amd64`, `linux/arm64`), each scanned with Trivy through `scan_gate.py` (report, `no-fix.txt` and step summary as in "Vulnerability scan"); access-tier checks against the amd64 build; a seeded critical report must fail the gate |
 | mediawiki image: publish | Push by digest without a tag; scan and gate of each platform manifest; one CycloneDX SBOM per platform attached as a signed attestation; cosign signature of the index and its manifests with the release key into `ghcr.io/fidonis/papaia-signatures`; verification; only then the tag. A published tag is verified instead and fails the job if it lacks signature or SBOM. Images carry the label `de.fidonis.platform-kit=<kit.lock version>` |
-
-Scan threshold (`scan_gate.py`): a CRITICAL or HIGH finding with a fixed version fails unless `security/exceptions.yaml` lists it (id, package, image, severity, reason, added, expiry at most 90 days later, approval); findings without a fix are listed and do not fail. An entry whose `approved_by` starts with `pending` waives nothing until it is countersigned. An expired entry fails every scan.
 
 Signing needs the secrets `COSIGN_PRIVATE_KEY` and `COSIGN_PASSWORD` and the variable `COSIGN_PUBLIC_KEY` (the release key the core verifies against), and write access of this repository to the package `papaia-signatures`. Without the secrets and the variable the publish job stops before anything is pushed. Missing write access cannot be tested without writing, so it fails the signing step; the build then exists only as an untagged digest, and no tag is created.
 
 The static conformance suite of papaia-kit reads Python and JavaScript/TypeScript server code; this repository ships none (servers come as images from their own repositories), so it has no input here.
+
+### Vulnerability scan
+
+The rule holds for every image the repository scans: the pinned image defaults of the delivered add-ons (third-party and own), the mediawiki image build and the CI tool set.
+
+- Trivy writes the complete JSON report: every severity, fixed and unfixed (no `--ignore-unfixed`, no severity filter). `scan_gate.py` decides from it.
+- A CRITICAL or HIGH finding with a fixed version **fails** the scan unless an approved entry in `security/exceptions.yaml` covers it.
+- A CRITICAL or HIGH finding **without** a fixed version never fails the scan. It is listed and needs no entry; an entry that matches only such a finding waives nothing and the gate reports it for removal.
+- MEDIUM, LOW and UNKNOWN are not gated; they stay in the JSON report.
+- An expired entry fails every scan.
+
+**Report.** Each scan job keeps one artifact for 90 days, named after the report (`trivy-<image>-<arch>.json`, `trivy-tools-ci`; the mediawiki build `trivy-mediawiki-<arch>.json`, its publish run `sbom-mediawiki-<tag>` with `no-fix-mediawiki-<arch>.txt`): the JSON report and `no-fix.txt`, one tab-separated line per CRITICAL or HIGH finding without a fix (image as scanned with tag and digest, platform, id, package, installed version, severity). The job's step summary shows a table per image and platform with the number of failing, excepted and unfixed findings. Titles and descriptions of the report are not printed.
+
+**Exceptions.** Every entry names id, package, image, severity, reason, `added`, `expires` and `approved_by`; nothing is waived while `approved_by` starts with `pending`.
+
+- Own images (`ghcr.io/fidonis/...`) and the CI tool set: a finding with a fix is fixed in the image. An entry is the exception for a fix that cannot be taken there (it lives in vendored upstream code) and expires at most 90 days after `added`.
+- Third-party images: an entry is allowed only while the distribution ships the fixed package and the upstream image is not rebuilt yet. It names the pinned image index as `digest: sha256:…`, covers a scan of exactly that digest and expires at most 14 days after `added`; the reason names the tag checked and the digest it pointed to on that date. The gate refuses an entry without a digest, with a longer term, or for a digest that no add-on default pins any more (re-check it against the scan of the new pin). Moving a pin does not extend `expires`. While such entries exist, a maintainer checks at least once a week whether the tag points to a new digest and re-pins within three working days.
+- The security officer countersigns each entry (`approved_by`). A CRITICAL finding without a fix that is listed as actively exploited goes to the security officer within two working days, not to the monthly review.
+
+**Release line.** `tools/release_line.py` exits non-zero and names id, package and image of each entry whose `approved_by` starts with `pending`. It runs for `main` and every pull request into it (job "Component versions") and when a release is published (`release-drafter.yml`, job "No pending exception entry in the release"). Milestone branches list pending entries in the scan output and waive nothing.
+
+**Monthly review.** On the first working day of each month a maintainer opens the latest run of `ci.yml` on the milestone branch or, without an open milestone, on `main`, and reads the `no-fix.txt` of every scan artifact. Where a fix has appeared since (the finding now fails the scan anyway), the image is rebuilt or re-pinned; where the upstream image is still not rebuilt, the maintainer re-pins or, for a third-party image only, prepares a 14-day entry for countersignature. The review adds one row to the table below.
+
+#### Monthly review
+
+| Date | Run | Without fix per image (CRITICAL/HIGH) | Actions |
+|---|---|---|---|
 
 ### Licenses
 
@@ -246,4 +273,4 @@ The policy is the one of papaia-kit. This repository builds one image, `papaia-m
 - **Never commit generated secrets** — Keycloak realm exports, client secrets, or any other credential produced by an actual install.
 - Variables marked `secret: true` in a manifest are either auto-generated on install or, for `env_replace_secrets` entries, filled in by hand from the Keycloak Admin UI after the client import — never hard-coded.
 - **No copyleft dependencies** (GPL/LGPL/AGPL/EUPL/SSPL and similar) in own code — enforced by the license-check workflow once a Python `src/` project exists. Separately running third-party services follow the service scope of the papaia-kit policy (see "Licenses").
-- **Vulnerabilities**: images are scanned on every change and nightly; accepted findings live in `security/exceptions.yaml` with an expiry (see "Continuous integration").
+- **Vulnerabilities**: images are scanned on every change and nightly; findings with a fix fail unless an approved, time-boxed entry in `security/exceptions.yaml` covers them, findings without a fix are reported and reviewed monthly (see "Vulnerability scan").

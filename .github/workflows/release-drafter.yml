@@ -6,13 +6,23 @@ on:
   pull_request:
     types: [opened, reopened, synchronize, edited]
   workflow_dispatch:
+  # A published release is checked once more: it must not carry an exception
+  # entry the security officer has not countersigned.
+  release:
+    types: [published]
 
 permissions:
   contents: read
 
+env:
+  UV_VERSION: "0.11.28"
+  PYTHON_VERSION: "3.12"
+  UV_PROJECT: tools/ci
+
 jobs:
   update_release_draft:
     name: Update release draft
+    if: github.event_name != 'release'
     permissions:
       contents: write
       pull-requests: write
@@ -21,3 +31,19 @@ jobs:
       - uses: release-drafter/release-drafter@v7
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  pending-exceptions:
+    name: No pending exception entry in the release
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Refuse pending exception entries
+        run: uv run --locked python tools/release_line.py

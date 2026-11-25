@@ -39,6 +39,7 @@ on:
       - 'mediawiki/**'
       - 'security/exceptions.yaml'
       - 'tools/scan_gate.py'
+      - 'tools/image_refs.py'
       - 'kit.lock'
       - 'tools/ci/**'
       - '.github/workflows/mediawiki-image.yml'
@@ -47,6 +48,7 @@ on:
       - 'mediawiki/**'
       - 'security/exceptions.yaml'
       - 'tools/scan_gate.py'
+      - 'tools/image_refs.py'
       - 'kit.lock'
       - 'tools/ci/**'
       - '.github/workflows/mediawiki-image.yml'
@@ -97,6 +99,8 @@ jobs:
           RELEASE_LINE: ${{ github.ref == 'refs/heads/main' || github.base_ref == 'main' }}
         run: |
           set -euo pipefail
+          # The ${MEDIAWIKI_IMAGE:-...} below is the literal compose text sed matches.
+          # shellcheck disable=SC2016
           default="$(sed -n 's#^ *image: ${MEDIAWIKI_IMAGE:-\([^}]*\)}$#\1#p' mediawiki/docker-compose.yml)"
           # While a milestone is open, the default may name the signed release
           # candidate of exactly this tag in a local test registry (see
@@ -195,12 +199,6 @@ jobs:
           output: ${{ steps.name.outputs.report }}
           exit-code: '0'
           timeout: 15m
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
-        if: always()
-        with:
-          name: ${{ steps.name.outputs.report }}
-          path: ${{ steps.name.outputs.report }}
-          retention-days: 90
       - name: Gate self test (seeded critical finding must fail)
         run: |
           set -uo pipefail
@@ -211,7 +209,18 @@ jobs:
       - name: Gate
         env:
           REPORT: ${{ steps.name.outputs.report }}
-        run: uv run --locked python tools/scan_gate.py "$REPORT"
+          PLATFORM: ${{ matrix.platform }}
+        run: >-
+          uv run --locked python tools/scan_gate.py "$REPORT"
+          --platform "$PLATFORM" --no-fix no-fix.txt --summary "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        if: always()
+        with:
+          name: ${{ steps.name.outputs.report }}
+          path: |
+            ${{ steps.name.outputs.report }}
+            no-fix.txt
+          retention-days: 90
 
   publish:
     name: Publish, SBOM and signature
@@ -340,8 +349,13 @@ jobs:
         if: steps.exists.outputs.published == 'false'
         run: |
           set -euo pipefail
-          uv run --locked python tools/scan_gate.py trivy-mediawiki-amd64.json
-          uv run --locked python tools/scan_gate.py trivy-mediawiki-arm64.json
+          status=0
+          for arch in amd64 arm64; do
+            uv run --locked python tools/scan_gate.py "trivy-mediawiki-$arch.json" \
+              --platform "linux/$arch" --no-fix "no-fix-mediawiki-$arch.txt" \
+              --summary "$GITHUB_STEP_SUMMARY" || status=1
+          done
+          exit "$status"
       - name: CycloneDX SBOM (amd64)
         if: steps.exists.outputs.published == 'false'
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
@@ -414,4 +428,5 @@ jobs:
           path: |
             sbom-*.cdx.json
             trivy-mediawiki-*.json
+            no-fix-mediawiki-*.txt
           retention-days: 90

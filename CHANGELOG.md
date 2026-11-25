@@ -11,6 +11,22 @@ based on merged pull requests; this file mirrors the published releases.
 ## [Unreleased]
 
 ### Security
+- **Scan rule: block on fixable findings, report the rest.** A CRITICAL or
+  HIGH finding with a fix fails every image scan unless an approved entry of
+  `security/exceptions.yaml` covers it; one without a fix never fails and
+  needs no entry. Each scan keeps its JSON report and `no-fix.txt` (one line
+  per CRITICAL or HIGH finding without a fix) as an artifact for 90 days and
+  writes the counts per image to the step summary; the findings without a
+  fix are reviewed monthly (`docs/development.md`, "Vulnerability scan").
+  An entry for a third-party image names the pinned digest and runs at most
+  14 days; the gate refuses it otherwise, or once the digest is no longer
+  pinned. The 741 third-party entries for findings with a fix are converted
+  to this form (expiry 2026-12-09) and the 972 entries for findings without a
+  fix are removed (1714 entries before, 742 after). `tools/release_line.py`
+  refuses a release while any entry is pending the security officer's
+  countersignature, on `main`, on pull requests into it and when a release is
+  published. A CI self test runs seeded reports through the gate on every
+  pull request.
 - **Third-party images re-pinned on the scan of 2026-11-25** (both
   platforms): Paperless-ngx 3.5.1 (`paperless` 2.2.0, adds
   `PAPERLESS_ALLOWED_HOSTS`), Apache Tika 3.4.0.0 (`paperless` 2.2.0,

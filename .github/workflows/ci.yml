@@ -3,9 +3,11 @@ name: CI
 # Every pull request and every push to main or a milestone branch runs the
 # full set: lint, unit tests, image pins, the papaia-kit checks (manifest
 # conformance, license policy, word check, commit metadata), a secret scan
-# over the whole history and the vulnerability scan. The nightly run repeats
-# it against the default branch, so a new CRITICAL finding with a fix in any
-# delivered image or in the CI tool set fails the scheduled run. The build,
+# over the whole history, the scan gate self test and the vulnerability scan.
+# The nightly run repeats it against the default branch, so a new CRITICAL or
+# HIGH finding with a fix in any delivered image or in the CI tool set fails
+# the scheduled run; findings without a fix are listed in each scan's
+# no-fix.txt and step summary (docs/development.md, "Vulnerability scan"). The build,
 # SBOM and signature of the mediawiki image live in mediawiki-image.yml.
 #
 # Tools are pinned: actions by commit SHA, container images by digest,
@@ -120,8 +122,39 @@ jobs:
       - name: No test registry or release candidate image on the release line
         if: github.ref == 'refs/heads/main' || github.base_ref == 'main'
         run: uv run --locked python tools/image_refs.py release
+      # A release never carries an exception the security officer has not
+      # countersigned; milestones list pending entries and waive nothing.
+      - name: No pending exception entry on the release line
+        if: github.ref == 'refs/heads/main' || github.base_ref == 'main'
+        run: uv run --locked python tools/release_line.py
       - name: Run the unit tests
         run: uv run --locked python -m unittest discover -s tools
+
+  scan-gate:
+    name: Scan gate self test
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+      # A gate that stopped gating would let every scan pass; a gate that
+      # blocks findings without a fix would fail on what cannot be acted on.
+      - name: Seeded findings with a fix must fail, without a fix must pass
+        run: |
+          set -uo pipefail
+          uv run --locked python tools/scan_gate.py tools/fixtures/scan/seeded-fixable.json >/dev/null 2>&1
+          status=$?
+          if [[ $status -ne 1 ]]; then echo "::error::scan gate passed seeded findings with a fix (exit $status)"; exit 1; fi
+          if ! uv run --locked python tools/scan_gate.py tools/fixtures/scan/seeded-no-fix.json --no-fix "$RUNNER_TEMP/no-fix.txt"; then
+            echo "::error::scan gate failed on seeded findings without a fix"; exit 1
+          fi
+          if [[ "$(wc -l < "$RUNNER_TEMP/no-fix.txt")" -ne 2 ]]; then echo "::error::no-fix list of the seeded report is not two lines"; exit 1; fi
+          echo "seeded findings decided as expected"
 
   root-markdown:
     name: Root Markdown files
@@ -297,16 +330,23 @@ jobs:
           output: ${{ steps.name.outputs.report }}
           exit-code: '0'
           timeout: 20m
+      # The gate writes the findings without a fix beside the report and the
+      # counts to the step summary; both files stay as the run's artifact.
+      - name: Gate
+        env:
+          REPORT: ${{ steps.name.outputs.report }}
+          PLATFORM: ${{ matrix.platform }}
+        run: >-
+          uv run --locked python tools/scan_gate.py "$REPORT"
+          --platform "$PLATFORM" --no-fix no-fix.txt --summary "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         if: always()
         with:
           name: ${{ steps.name.outputs.report }}
-          path: ${{ steps.name.outputs.report }}
-          retention-days: 30
-      - name: Gate
-        env:
-          REPORT: ${{ steps.name.outputs.report }}
-        run: uv run --locked python tools/scan_gate.py "$REPORT"
+          path: |
+            ${{ steps.name.outputs.report }}
+            no-fix.txt
+          retention-days: 90
 
   vulnerability-tools:
     name: Vulnerability scan (CI tool set)
@@ -332,14 +372,18 @@ jobs:
           output: trivy-tools-ci.json
           exit-code: '0'
           timeout: 10m
+      - name: Gate
+        run: >-
+          uv run --locked python tools/scan_gate.py trivy-tools-ci.json
+          --no-fix no-fix.txt --summary "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         if: always()
         with:
           name: trivy-tools-ci
-          path: trivy-tools-ci.json
-          retention-days: 30
-      - name: Gate
-        run: uv run --locked python tools/scan_gate.py trivy-tools-ci.json
+          path: |
+            trivy-tools-ci.json
+            no-fix.txt
+          retention-days: 90
 
   secrets:
     name: Secret scan (full history)

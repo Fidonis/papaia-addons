@@ -1,0 +1,32 @@
+{
+  "SchemaVersion": 2,
+  "ArtifactName": "ghcr.io/fidonis/papaia-mediawiki:1.43.11-1.0.0",
+  "ArtifactType": "container_image",
+  "Results": [
+    {
+      "Target": "ghcr.io/fidonis/papaia-mediawiki:1.43.11-1.0.0 (debian 13.2)",
+      "Class": "os-pkgs",
+      "Type": "debian",
+      "Vulnerabilities": [
+        {
+          "VulnerabilityID": "CVE-2099-0011",
+          "PkgName": "seeded-fixable-critical-lib",
+          "InstalledVersion": "1.0.0-1",
+          "FixedVersion": "1.0.0-2",
+          "Status": "fixed",
+          "Severity": "CRITICAL",
+          "Title": "Seeded fixable critical finding of the scan gate self test"
+        },
+        {
+          "VulnerabilityID": "CVE-2099-0012",
+          "PkgName": "seeded-fixable-high-lib",
+          "InstalledVersion": "3.0.0-1",
+          "FixedVersion": "3.0.0-2",
+          "Status": "fixed",
+          "Severity": "HIGH",
+          "Title": "Seeded fixable high finding of the scan gate self test"
+        }
+      ]
+    }
+  ]
+}

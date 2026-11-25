@@ -40,13 +40,13 @@ variable in `<papaia-config>/addons/paperless/.env` to run another one.
 <!-- components:start -->
 | Component | Version | Role | Image variable |
 |---|---|---|---|
-| [Paperless-ngx](https://github.com/paperless-ngx/paperless-ngx) | `3.4.2` | primary | `PAPERLESS_IMAGE` |
+| [Paperless-ngx](https://github.com/paperless-ngx/paperless-ngx) | `3.5.1` | primary | `PAPERLESS_IMAGE` |
 | [paperless-mcp-rbac](https://github.com/Fidonis/paperless-mcp-rbac) | `0.2.0-rc.2` | primary | `PAPERLESS_MCP_IMAGE` |
 | [nginx](https://nginx.org) | `1.31.10-alpine` | sidecar | `PAPERLESS_GATE_IMAGE` |
 | [Valkey](https://github.com/valkey-io/valkey) | `9.2.0-alpine` | sidecar | `PAPERLESS_REDIS_IMAGE` |
 | [PostgreSQL](https://www.postgresql.org) | `18.7` | sidecar | `PAPERLESS_DB_IMAGE` |
 | [Gotenberg](https://github.com/gotenberg/gotenberg) | `8.40.0` | sidecar | `PAPERLESS_GOTENBERG_IMAGE` |
-| [Apache Tika](https://tika.apache.org) | `3.3.3.1` | sidecar | `PAPERLESS_TIKA_IMAGE` |
+| [Apache Tika](https://tika.apache.org) | `3.4.0.0` | sidecar | `PAPERLESS_TIKA_IMAGE` |
 <!-- components:end -->
 
 ---
@@ -92,6 +92,11 @@ Edit `.env` and fill in all `CHANGE_ME` values:
 | `PAPERLESS_SECRET_KEY` | Django secret key (generate ≥ 64 chars randomly) |
 | `PAPERLESS_ADMIN_PASSWORD` | Bootstrap admin password (generate randomly) |
 | `KC_PAPERLESS_CLIENT_SECRET` | Keycloak client secret for the `paperless` OIDC client |
+
+Paperless accepts requests only for the host name of `PAPERLESS_PUBLIC_URL`,
+`localhost` and the names in `PAPERLESS_ALLOWED_HOSTS` (default `paperless`,
+the name under which `paperless-mcp` reaches it). If you set
+`PAPERLESS_ALLOWED_HOSTS` in `.env`, keep `paperless` in the list.
 
 ### 2. Register Keycloak clients
 

@@ -5,6 +5,52 @@ format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the versions are the add-on's own `version` in `papaia-app.yaml`. Steps an
 operator has to do by hand are listed under `### Upgrade notes`.
 
+## [2.2.0] - 2026-11-25
+
+### Security
+Every moved image was scanned on linux/amd64 and linux/arm64 (Trivy
+vulnerability database of 2026-11-25); what remains is listed one by one in
+`security/exceptions.yaml`.
+- Paperless-ngx 3.4.2 -> 3.5.1, the newest release. It removes the zlib
+  finding of 3.4.2; 206 CRITICAL and HIGH findings with a fix remain (the
+  Debian and Python packages of the upstream build), none of which a newer
+  build ships yet.
+- Apache Tika 3.3.3.1 -> 3.4.0.0, the same reference as in the add-on
+  `qdrant-ingest`. 3.4.0.0 has no CRITICAL or HIGH finding (3.3.3.1: cxf-core,
+  jetty-http, jetty-security).
+- PostgreSQL 18.7 moves to the current digest of the same tag (rebuilt
+  2026-11-24): it removes the Kerberos and zlib findings; the Go runtime of
+  `gosu` and zstd remain.
+- Gotenberg 8.40.0 stays: it is the newest 8.x release and its digest is
+  unchanged. Gotenberg 9 is a major step and is not taken here.
+
+### Added
+- `PAPERLESS_ALLOWED_HOSTS` (default `paperless`): the host names Paperless
+  accepts besides the one in `PAPERLESS_PUBLIC_URL` and `localhost`.
+
+### Upgrade notes
+- From 3.5.0 on, with `PAPERLESS_URL` set, Paperless accepts only that host
+  name and `localhost`. The add-on adds `paperless`, the name under which
+  `paperless-mcp` reaches it, so the MCP server keeps working. If you set
+  `PAPERLESS_ALLOWED_HOSTS` in `.env`, keep `paperless` in the list; never
+  use `*`.
+- Paperless-ngx applies its database migrations from 3.4.2 to 3.5.1 on the
+  first start (3.5.0 replaces the tag tree storage with an adjacency list);
+  the existing `paperless-data` and `paperless-pgdata` volumes are used as
+  they are. A downgrade to 3.4.2 afterwards is not supported, so take a
+  backup (`document_exporter`) first if a rollback must stay possible.
+- Other changes of Paperless-ngx 3.5 (upstream release notes): bulk actions
+  run in the background, expired sessions are cleared automatically, OCR
+  arguments that Paperless sets itself are ignored in `PAPERLESS_OCR_USER_ARGS`,
+  and the file name filter of scheduled workflows uses a PostgreSQL-compatible
+  pattern.
+- Apache Tika 3.4: tika-server runs on Java 17 (in the image), caps
+  `multipart/form-data` uploads at 50 MB by default, limits embedded
+  documents to a depth of 20 and measures the zip-bomb ratio (1000) across
+  the whole document. Image user, port and start command are unchanged; Tika
+  keeps no data.
+- Ports, networks, volumes, users and capabilities are unchanged.
+
 ## [2.1.0] - 2026-11-24
 
 ### Security

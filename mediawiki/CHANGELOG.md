@@ -18,16 +18,27 @@ operator has to do by hand are listed under `### Upgrade notes`.
   `security/exceptions.yaml`.
 - Until `1.43.11-1.0.1` is published, the default of `MEDIAWIKI_IMAGE` is its
   signed release candidate from a local test registry.
-- MediaWiki MCP Server 0.20.0 -> 0.20.1. Its remaining findings (undici,
-  brace-expansion, follow-redirects) are fixed in no 0.20 release; 0.21.0
-  still has the first two and changes the behaviour of `update-page`, so the
-  add-on stays on the 0.20 line.
+- MediaWiki MCP Server 0.20.0 -> 0.21.0, pinned by tag and image index
+  digest. 0.20.1 is the newest 0.20 release; 0.21.0 removes the
+  follow-redirects finding. Its remaining findings (undici, brace-expansion
+  in the bundled Node.js dependencies) are fixed upstream, but no MediaWiki
+  MCP Server release ships the fixes yet; they stay listed in
+  `security/exceptions.yaml`.
 - MariaDB 11.8.9 stays: it is the newest 11.8 release. Its findings are in the
   Go runtime of `gosu`, fixed in no MariaDB 11.8 image.
 
 ### Upgrade notes
-- Nothing to do: configuration, environment, the database volume and the
-  behaviour of the wiki and the MCP server are unchanged.
+- Configuration, environment, ports, networks and the database volume are
+  unchanged.
+- MediaWiki MCP Server 0.21.0 runs on Node.js 26 (0.20 on Node.js 24); the
+  start command, user, port and health check of the image are unchanged.
+- `update-page` with `section=N` in replace mode now refuses a source that
+  does not begin with a heading and quotes the heading to keep; appends,
+  prepends, find-replace and whole-page replaces are unchanged. A client that
+  replaced a section without its heading has to send the heading too.
+- New read-only tool `get-random-pages`, subject to the same wiki rights of
+  the signed-in user as every other tool. The new per-wiki `bot` setting is
+  not set, so edits are not marked as bot edits.
 
 ## [1.0.0] - 2026-10-24
 

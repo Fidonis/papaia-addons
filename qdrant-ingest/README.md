@@ -78,7 +78,7 @@ variable in `<papaia-config>/addons/qdrant-ingest/.env` to run another one.
 | Component | Version | Role | Image variable |
 |---|---|---|---|
 | [qdrant-ingest](https://github.com/Fidonis/qdrant-ingest) | `0.3.1` | primary | `QI_INGEST_IMAGE` |
-| [Apache Tika](https://tika.apache.org) | `3.3.3.1` | sidecar | `QI_TIKA_IMAGE` |
+| [Apache Tika](https://tika.apache.org) | `3.4.0.0` | sidecar | `QI_TIKA_IMAGE` |
 <!-- components:end -->
 
 **Before the 0.3.1 release of qdrant-ingest.** Until it is published, the default of

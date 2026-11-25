@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import dataclasses
 import datetime
 import io
 import json
@@ -94,6 +95,45 @@ def review_problems(raw: dict) -> list[str]:
     elif (expires - added).days > scan_gate.MAX_DAYS:
         problems.append(f"valid for more than {scan_gate.MAX_DAYS} days")
     return problems
+
+
+def pinned_tags(root: Path) -> dict[str, set[str]]:
+    """Exception image -> tags its add-on defaults pin (one per release line)."""
+    import image_refs
+
+    tags: dict[str, set[str]] = {}
+    for ref in image_refs.pinned_refs(image_refs.checked_addons(root)):
+        name = ref.split("@", 1)[0]
+        tag = name.rpartition(":")[2]
+        tags.setdefault(scan_gate.exception_image(scan_gate.repository(ref)), set()).add(tag)
+    return tags
+
+
+def reviewed_problems(item: scan_gate.Entry, tags: dict[str, set[str]], reason: str | None = None) -> list[str]:
+    """Pinned tags of the entry's image that its reason does not name.
+
+    The reason names the scanned build as `<image>:<tag>`; an image pinned on
+    two release lines names both tags (`<image>:<tag> and <tag>`).
+    """
+    if reason is None:
+        reason = REASONS[(item.image, item.vuln_id, item.package, item.severity)]
+    if f"{item.image}:" not in reason:
+        return sorted(tags.get(item.image, set()))
+    return sorted(tag for tag in tags.get(item.image, set()) if not re.search(
+        rf"(?<![\w.-]){re.escape(tag)}(?![\w.-]|\.\d)", reason))
+
+
+def _reasons() -> dict[tuple[str, str, str, str], str]:
+    import yaml
+
+    data = yaml.safe_load(REPO_EXCEPTIONS.read_text(encoding="utf-8"))
+    return {
+        (raw["image"], raw["id"], raw["package"], raw["severity"]): raw["reason"]
+        for raw in data["exceptions"] or []
+    }
+
+
+REASONS = _reasons()
 
 
 class GateCase(unittest.TestCase):
@@ -352,6 +392,50 @@ class PinnedImageTest(GateCase):
         entries = scan_gate.load_exceptions(REPO_EXCEPTIONS)
         stale = scan_gate.unpinned_entries(entries, scan_gate.pinned_repositories(HERE.parent))
         self.assertEqual([f"{e.image} {e.vuln_id} {e.package}" for e in stale], [])
+
+    def test_repository_exceptions_were_reviewed_for_the_pinned_tags(self) -> None:
+        # An entry is written for the scan of one pinned build; its reason names
+        # that image and tag. When a pin moves, every entry of the image is
+        # re-checked against the scan of the new pin, and entries whose finding
+        # is gone are dropped, so no entry stays behind from an earlier pin.
+        tags = pinned_tags(HERE.parent)
+        entries = scan_gate.load_exceptions(REPO_EXCEPTIONS)
+        stale = [
+            f"{e.image} {e.vuln_id} {e.package}"
+            for e in entries
+            if e.image != scan_gate.TOOL_SET and reviewed_problems(e, tags)
+        ]
+        self.assertEqual(stale, [])
+
+    def test_reviewed_check_requires_every_pinned_tag_of_the_image(self) -> None:
+        tags = {IMAGE: {"1.43.11-1.0.1"}, "ghcr.io/fidonis/demo": {"0.1.2", "0.2.0-rc.2"}}
+        ok = scan_gate.Entry("CVE-2099-1", "libdemo", IMAGE, "HIGH", datetime.date(2026, 11, 25),
+                             datetime.date(2027, 2, 1), False)
+        reasons = {
+            "pinned tag": (f"libdemo 1.0 in {IMAGE}:1.43.11-1.0.1; no fix yet", []),
+            "old tag": (f"libdemo 1.0 in {IMAGE}:1.43.11-1.0.0; no fix yet", ["1.43.11-1.0.1"]),
+            "tag without image": ("libdemo 1.0 in 1.43.11-1.0.1; no fix yet", ["1.43.11-1.0.1"]),
+        }
+        for name, (reason, missing) in reasons.items():
+            with self.subTest(case=name):
+                self.assertEqual(reviewed_problems(ok, tags, reason), missing)
+        both = dataclasses.replace(ok, image="ghcr.io/fidonis/demo")
+        self.assertEqual(
+            reviewed_problems(both, tags, "x in ghcr.io/fidonis/demo:0.1.2 and 0.2.0-rc.2; y"), []
+        )
+        self.assertEqual(
+            reviewed_problems(both, tags, "x in ghcr.io/fidonis/demo:0.1.2; y"), ["0.2.0-rc.2"]
+        )
+
+    def test_repository_exceptions_hold_one_entry_per_id_package_and_image(self) -> None:
+        seen: dict[tuple[str, str, str], str] = {}
+        twice = []
+        for item in scan_gate.load_exceptions(REPO_EXCEPTIONS):
+            key = (item.image, item.vuln_id, item.package)
+            if key in seen:
+                twice.append(" ".join(key))
+            seen[key] = item.severity
+        self.assertEqual(twice, [])
 
     def test_repository_exceptions_carry_a_review_state_and_expire_in_time(self) -> None:
         import yaml

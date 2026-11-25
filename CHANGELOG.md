@@ -10,6 +10,19 @@ based on merged pull requests; this file mirrors the published releases.
 
 ## [Unreleased]
 
+### Security
+- **Third-party images re-pinned on the scan of 2026-11-25** (both
+  platforms): Paperless-ngx 3.5.1 (`paperless` 2.2.0, adds
+  `PAPERLESS_ALLOWED_HOSTS`), Apache Tika 3.4.0.0 (`paperless` 2.2.0,
+  `qdrant-ingest` 2.1.1; no CRITICAL or HIGH finding left), the current
+  digest of PostgreSQL 18.7, and MediaWiki MCP Server 0.21.0 (`mediawiki`
+  1.0.1, unreleased). Gotenberg 8.40.0, MariaDB 11.8.9 and Qdrant v1.20.2 stay
+  on the newest release of their line. `security/exceptions.yaml` is rewritten
+  for these pins: one pending entry per remaining finding, none for a finding
+  that is gone; `tools/test_scan_gate.py` checks that every entry names the
+  pinned tag it was reviewed for and that no id, package and image appears
+  twice.
+
 ### Changed
 - **CI tool set on the final papaia-kit 0.1.0**, the kit's first release
   (MIT license). `vendor/papaia-kit/0.1.0/` holds the release wheel and its

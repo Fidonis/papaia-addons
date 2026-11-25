@@ -1,5 +1,5 @@
 name: qdrant-ingest
-version: 2.1.0
+version: 2.1.1
 addon_repo: papaia-addon-qdrant-ingest
 requires:
   # Contract generation this addon is built against; checked against the
@@ -28,7 +28,7 @@ components:
     role: sidecar
     kind: upstream
     image_var: QI_TIKA_IMAGE
-    version: "3.3.3.1"
+    version: "3.4.0.0"
     source: https://tika.apache.org
 
 networks:

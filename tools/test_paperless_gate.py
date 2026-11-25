@@ -137,6 +137,19 @@ class ComposeHardening(unittest.TestCase):
         tmpfs = self.services["paperless-gate"].get("tmpfs", [])
         self.assertTrue(any(str(t).startswith("/tmp") for t in tmpfs))
 
+    def test_paperless_accepts_the_host_name_the_mcp_server_calls(self) -> None:
+        # From Paperless-ngx 3.5 on, with PAPERLESS_URL set, Paperless accepts
+        # only that host name and localhost unless PAPERLESS_ALLOWED_HOSTS adds
+        # more. paperless-mcp calls the gate as `paperless`, so that name (and
+        # no wildcard) must be on the list, or every tool call is refused.
+        env = self.services["paperless"]["environment"]
+        mcp_url = default_of(self.services["paperless-mcp"]["environment"]["PAPERLESS_URL"])
+        mcp_host = re.match(r"https?://([^:/]+)", mcp_url)
+        assert mcp_host is not None
+        hosts = [h.strip() for h in default_of(env.get("PAPERLESS_ALLOWED_HOSTS", "")).split(",") if h.strip()]
+        self.assertIn(mcp_host.group(1), hosts)
+        self.assertNotIn("*", hosts)
+
     def test_mcp_server_talks_to_the_gate_with_its_own_secret(self) -> None:
         mcp = self.services["paperless-mcp"]
         env = mcp["environment"]

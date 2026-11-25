@@ -5,6 +5,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the versions are the add-on's own `version` in `papaia-app.yaml`. Steps an
 operator has to do by hand are listed under `### Upgrade notes`.
 
+## [2.1.1] - 2026-11-25
+
+### Security
+- Apache Tika 3.3.3.1 -> 3.4.0.0, the same reference as in the add-on
+  `paperless`. Scanned on linux/amd64 and linux/arm64 (Trivy vulnerability
+  database of 2026-11-25), 3.4.0.0 has no CRITICAL or HIGH finding; the four
+  of 3.3.3.1 (cxf-core, jetty-http, jetty-security) are gone.
+
+### Upgrade notes
+- Configuration and environment are unchanged; Tika keeps no data, so nothing
+  is migrated. Image user, port and start command are the same.
+- tika-server 3.4 runs on Java 17 (in the image), caps `multipart/form-data`
+  uploads at 50 MB, limits embedded documents to a depth of 20 and measures
+  the zip-bomb ratio (1000) across the whole document. The ingester sends
+  each file as the body of `PUT /rmeta/text`, not as a multipart form, so
+  `QI_MAX_FILE_BYTES` keeps its meaning; archives nested deeper than 20
+  levels are no longer extracted below that depth.
+
 ## [2.1.0] - 2026-11-24
 
 ### Security

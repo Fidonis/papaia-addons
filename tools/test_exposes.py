@@ -527,6 +527,106 @@ class PaperlessTests(unittest.TestCase):
         self.assertNotIn("KC_MCP_PAPERLESS_CLIENT_SECRET", env)
 
 
+class PaperlessConnectTests(unittest.TestCase):
+    """paperless-connect describes the same tool server once, in `exposes:`."""
+
+    def setUp(self) -> None:
+        self.path = REPO_ROOT / "paperless-connect"
+        self.manifest = components.load_manifest(self.path)
+        self.text = (self.path / components.MANIFEST).read_text(encoding="utf-8")
+
+    def entry(self) -> dict:
+        entries = self.manifest.get("exposes")
+        self.assertIsInstance(entries, list)
+        self.assertEqual(len(entries), 1)
+        return entries[0]
+
+    def test_manifest_and_files_agree(self) -> None:
+        self.assertEqual(components.check_addon(self.path), [])
+
+    def test_requires_generation_twelve(self) -> None:
+        self.assertEqual(self.manifest["requires"]["addon_api"], [12])
+        self.assertEqual(self.entry()["requires"]["addon_api"], [12])
+        self.assertEqual(self.manifest["papaia_compat"], ">=1.10.0")
+
+    def test_generation_comments_equal_the_core_table(self) -> None:
+        self.assertEqual(exposes.compare_generations(self.text, CORE_ADDON_API), [])
+        self.assertEqual(sorted(exposes.generation_comments(self.text)), [7, 12])
+
+    def test_tool_server_entry_is_the_one_of_paperless(self) -> None:
+        # The same tool server in front of another Paperless: a consumer binds to the
+        # same id and audience whichever of the two add-ons is installed.
+        entry = self.entry()
+        self.assertEqual(entry["id"], "paperless.documents")
+        self.assertEqual(entry["kind"], "mcp")
+        self.assertEqual(entry["address"], {"service": "paperless-mcp", "port": 8000, "scheme": "http", "path": "/mcp"})
+        self.assertEqual(entry["audience"], "mcp-paperless")
+        self.assertEqual(entry["identity"], ["person", "service"])
+        self.assertEqual(entry["standard_operations"], ["describe_access", "check_access"])
+
+    def test_operations_equal_those_of_the_paperless_addon(self) -> None:
+        # One tool server, one contract: the image versions may differ between the
+        # two add-ons, the operations a consumer sees may not.
+        self.assertEqual([c["id"] for c in self.manifest["components"]], ["paperless-mcp-rbac"])
+        paperless = components.load_manifest(REPO_ROOT / "paperless")
+        self.assertEqual(self.entry()["operations"], paperless["exposes"][0]["operations"])
+
+    def test_the_tool_server_takes_no_identity_from_a_header(self) -> None:
+        # paperless-mcp accepts only a verified bearer token; the header is read by the
+        # existing Paperless, which this add-on does not run.
+        self.assertIs(self.entry().get("header_identity"), False)
+
+    def test_holds_no_data_of_its_own(self) -> None:
+        entry = self.entry()
+        self.assertEqual(entry["storage"], {"personal_data": False})
+        self.assertNotIn("volumes", entry)
+        self.assertNotIn("export", entry)
+        compose = exposes.compose_file(self.path)
+        self.assertFalse(compose.get("volumes"))
+
+    def test_declares_no_roles_events_or_service_accounts(self) -> None:
+        entry = self.entry()
+        for key in ("roles", "events", "service_accounts", "delegation", "downstream"):
+            self.assertNotIn(key, entry)
+
+    def test_ships_no_description_the_core_generates(self) -> None:
+        # The `mcp-paperless` resource-server client comes from `exposes:`; the add-on
+        # ships no chat entry or mapper, no web sign-in client and no proxy host.
+        self.assertNotIn("integration", self.manifest)
+        self.assertFalse((self.path / "integration").exists())
+
+    def test_puts_no_chat_on_its_network(self) -> None:
+        # The add-on stays outside the suite: the chat reaches it only through the
+        # core's chat relay after the operator opt-in, never over a network of its own
+        # (the core refuses the opt-in for an add-on that attaches librechat).
+        networks = self.manifest["networks"]
+        self.assertEqual(networks["app_network"], "${PAPAIA_PROJECT:-papaia}-paperless-connect-net")
+        self.assertNotIn("librechat", networks.get("attach") or [])
+        for isolated in networks.get("isolated") or []:
+            self.assertNotIn("librechat", isolated.get("attach") or [])
+
+    def test_operator_docs_name_the_proxy_of_the_customer(self) -> None:
+        readme = (self.path / "README.md").read_text(encoding="utf-8")
+        self.assertIn("papaia ≥ 1.10.0", readme)
+        self.assertIn("not part of the acceptance", readme)
+        self.assertNotIn("librechat-audience-mapper.json", readme)
+        self.assertNotIn("mcp-paperless.json", readme)
+
+    def test_operator_docs_offer_no_direct_chat_path(self) -> None:
+        # No hand-made chat entry, audience mapper or network attachment: each would
+        # bypass the operator opt-in of the core.
+        readme = (self.path / "README.md").read_text(encoding="utf-8")
+        self.assertIn("`trust: addon`", readme)
+        self.assertIn("papaia-ctl addon chat allow paperless-connect", readme)
+        self.assertNotIn("mcp-paperless-audience", readme)
+        self.assertNotIn("mcpServers:", readme)
+        self.assertNotIn("  librechat:\n    networks:", readme)
+        env = (self.path / ".env.example").read_text(encoding="utf-8")
+        self.assertNotIn("mcp-paperless-audience", env)
+        hint = self.manifest["env_prompts"]["PAPERLESS_MCP_OIDC_AUDIENCE"]["hint"]
+        self.assertNotIn("LibreChat token", hint)
+
+
 class RepositoryTests(unittest.TestCase):
     def test_no_manifest_carries_the_undecided_marker(self) -> None:
         for path in components.addon_dirs(REPO_ROOT):

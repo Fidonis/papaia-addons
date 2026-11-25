@@ -5,6 +5,34 @@ file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.
 and the versions are the add-on's own `version` in `papaia-app.yaml`. Steps an
 operator has to do by hand are listed under `### Upgrade notes`.
 
+## [Unreleased]
+
+### Added
+- `exposes:` entry `paperless.documents`: the same tool server, audience and
+  operations as the `paperless` add-on, with data classes, `header_identity:
+  false` and `storage: {personal_data: false}`. The core creates the
+  resource-server client `mcp-paperless` from it.
+
+### Changed
+- **Breaking:** the add-on requires papaia 1.10.0 (`requires.addon_api: [12]`).
+- **Breaking:** the add-on stays outside the suite (`trust: addon`). It ships no
+  LibreChat entry, no `librechat` audience mapper and no Keycloak client, and no
+  longer attaches `librechat` to its network. The chat reaches it only after
+  the operator allows it with `papaia-ctl addon chat allow paperless-connect`.
+
+### Removed
+- `integration/ai/librechat/librechat.yaml`,
+  `integration/infra/keycloak/librechat-audience-mapper.json` and
+  `integration/infra/keycloak/mcp-paperless.json`, and `integration:` in the
+  manifest.
+
+### Upgrade notes
+- After the upgrade the chat lists no Paperless tools until the operator runs
+  `papaia-ctl addon chat allow paperless-connect` (README, "Chat access").
+- With an external identity provider: remove the `mcp-paperless-audience`
+  mapper from the `librechat` client, and the `Paperless` entry from a
+  hand-maintained `librechat.yaml`, if you added them for an earlier version.
+
 ## [2.0.1] - 2026-11-24
 
 ### Security

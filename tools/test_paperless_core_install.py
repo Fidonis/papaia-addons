@@ -16,6 +16,7 @@ The installation lives in a temporary directory: `setup` and `addon install` run
 core's own command line against a copy of the checkout, exactly as the core's tests do.
 No container is started, no port is published and nothing outside the directory is
 written. Generated secrets stay in the temporary directory and are never printed.
+`install_on_core` is shared with tools/test_paperless_connect_core_install.py.
 """
 
 from __future__ import annotations
@@ -40,7 +41,7 @@ DRIVER = r"""
 import contextlib, io, json, shutil, sys
 from pathlib import Path
 
-work, addon_source = Path(sys.argv[1]), Path(sys.argv[2])
+work, addon_source, name = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[4]
 sys.path[:0] = [sys.argv[3], sys.argv[3] + "/tests"]
 import yaml
 from install_helpers import Installation
@@ -50,7 +51,7 @@ inst = Installation(work, ["--app-host=https://papaia.example.org"])
 # The checkout's compatibility matrix, unchanged: it decides whether the add-on is a
 # module of the suite (`trust: platform`), which the chat entry needs.
 shutil.copytree(Path(sys.argv[3]).parent / "compat", inst.repo / "compat")
-addon = work / "addons" / "paperless"
+addon = work / "addons" / name
 shutil.copytree(addon_source, addon, ignore=shutil.ignore_patterns(".env", "data"))
 
 def run(*args):
@@ -60,7 +61,7 @@ def run(*args):
     return code, out.getvalue()
 
 setup_code, _ = run("setup", "--env=papaia", *inst.flags)
-install_code, install_out = run("addon-install", "--name", "paperless", "--path", str(addon))
+install_code, install_out = run("addon-install", "--name", name, "--path", str(addon))
 check_code, check_out = run("addon-check")
 
 librechat = yaml.safe_load(
@@ -70,19 +71,30 @@ realm = json.loads((inst.config / "infra/keycloak/realm-import/papaia-realm.json
 librechat_client = next(c for c in realm["clients"] if c["clientId"] == "librechat")
 catalog = json.loads((inst.config / "platform/services.json").read_text(encoding="utf-8"))
 entry = next((e for e in catalog["services"] if e["id"] == "paperless.documents"), {})
+
+def chat_networks(path):
+    services = (yaml.safe_load(path.read_text(encoding="utf-8")) or {}).get("services") or {}
+    return (services.get("librechat") or {}).get("networks") or []
+
+# Generated compose overrides that put librechat on a network of this add-on.
+overrides = inst.config / "overrides"
+chat_override = sorted(
+    str(p.relative_to(inst.config)) for p in overrides.rglob("*.yml")
+    if any(name in str(n) for n in chat_networks(p))) if overrides.is_dir() else []
 print(json.dumps({
     "setup": setup_code,
     "install": install_code,
     "install_out": [line for line in install_out.splitlines()
                     if "mapper" in line.lower() or "mcp-paperless" in line],
     "check": check_code,
-    "check_out": [line for line in check_out.splitlines() if "paperless" in line],
+    "check_out": [line for line in check_out.splitlines() if line.startswith(name + " ")],
     "servers": librechat.get("mcpServers") or {},
     "allowed": (librechat.get("mcpSettings") or {}).get("allowedDomains") or [],
     "mappers": {m["name"]: m for m in librechat_client.get("protocolMappers") or []},
     "realm_clients": sorted(c["clientId"] for c in realm["clients"]),
     "trust": entry.get("trust"),
     "address": entry.get("address"),
+    "chat_override": chat_override,
     "addon_manifest_dirs": [str(p.relative_to(inst.config))
                             for p in inst.config.rglob("addon-manifests")],
     "addon_integration_files": sorted(
@@ -95,25 +107,32 @@ def core_tools() -> Path:
     return Path(CORE).resolve() / "tools"
 
 
+def install_on_core(test: type[unittest.TestCase], addon: Path) -> dict:
+    """Install the add-on in `addon` under its directory name on a temporary copy of the
+    core checkout and return what the core rendered. Skips the class when the checkout
+    does not generate chat entries."""
+    tools = core_tools()
+    if not (tools / "lib" / "chat_servers.py").is_file():
+        raise unittest.SkipTest(f"{CORE} is not a core checkout that generates chat entries")
+    work = Path(tempfile.mkdtemp(prefix=f"{addon.name}-core-"))
+    test.addClassCleanup(shutil.rmtree, work, True)
+    proc = subprocess.run(
+        ["uv", "run", "--locked", "--extra", "dev", "python", "-c", DRIVER,
+         str(work), str(addon), str(tools), addon.name],
+        cwd=tools, capture_output=True, text=True, timeout=600, check=False,
+    )
+    if proc.returncode != 0:
+        raise AssertionError(f"driver failed ({proc.returncode}): {proc.stderr[-2000:]}")
+    return json.loads(proc.stdout.strip().splitlines()[-1])
+
+
 @unittest.skipUnless(CORE, "set PAPAIA_CORE_CHECKOUT to a core checkout to run this test")
 class PaperlessOnTheCoreTests(unittest.TestCase):
     result: dict
 
     @classmethod
     def setUpClass(cls) -> None:
-        tools = core_tools()
-        if not (tools / "lib" / "chat_servers.py").is_file():
-            raise unittest.SkipTest(f"{CORE} is not a core checkout that generates chat entries")
-        work = Path(tempfile.mkdtemp(prefix="paperless-core-"))
-        cls.addClassCleanup(shutil.rmtree, work, True)
-        proc = subprocess.run(
-            ["uv", "run", "--locked", "--extra", "dev", "python", "-c", DRIVER,
-             str(work), str(ADDON), str(tools)],
-            cwd=tools, capture_output=True, text=True, timeout=600, check=False,
-        )
-        if proc.returncode != 0:
-            raise AssertionError(f"driver failed ({proc.returncode}): {proc.stderr[-2000:]}")
-        cls.result = json.loads(proc.stdout.strip().splitlines()[-1])
+        cls.result = install_on_core(cls, ADDON)
 
     def test_setup_and_install_succeed(self) -> None:
         self.assertEqual(self.result["setup"], 0)

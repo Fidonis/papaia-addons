@@ -2,13 +2,23 @@
 
 Connects an existing standalone [Paperless-ngx](https://docs.paperless-ngx.com/) instance to [papaia](https://github.com/Fidonis/papaia).
 
-Adds an OIDC/RBAC-secured MCP server for AI-assisted document access via LibreChat and the
-matching Keycloak client registration — without touching the existing Paperless installation.
+Adds an OIDC/RBAC-secured MCP server for document access from papaia modules, and describes it in
+the platform catalog (`exposes:`), from which the core creates the Keycloak client — without
+touching the existing Paperless installation. The add-on is not a module of the suite
+(`trust: addon`): the chat reaches it only after you allow it (see
+[Chat access](#chat-access-operator-opt-in)).
 
 Use the full [`paperless`](https://github.com/Fidonis/papaia-addon-paperless) add-on if you want
 papaia to manage the Paperless-ngx service, its database, and supporting containers.
 
-**Requires papaia ≥ 1.3.0** (`addon_api` 2).
+**Requires papaia ≥ 1.10.0** (`addon_api` 12).
+
+> **Not part of the acceptance.** The existing Paperless and the reverse proxy in front of
+> it are run by you, outside papaia. This variant relies on that proxy to keep the
+> `X-Papaia-Remote-User` header away from everyone but the MCP server (see
+> [Prerequisites](#prerequisites)); it is therefore not part of the acceptance of the papaia
+> suite, which covers only the bundled [`paperless`](https://github.com/Fidonis/papaia-addon-paperless)
+> add-on with its gate. Securing the proxy is your responsibility.
 
 ---
 
@@ -16,13 +26,12 @@ papaia to manage the Paperless-ngx service, its database, and supporting contain
 
 | Service | Port | Description |
 |---|---|---|
-| `paperless-mcp` | internal | OIDC/RBAC-secured MCP server for LibreChat |
+| `paperless-mcp` | internal | OIDC/RBAC-secured MCP server for papaia modules and, after the opt-in, the chat |
 
 All services run on the add-on's own isolated Docker bridge network,
 `${PAPAIA_PROJECT:-papaia}-paperless-connect-net` — `papaia-paperless-connect-net` on a
 default single-stack host, or `papaia-<env>-paperless-connect-net` when several papAIa
-deployments share a host. `papaia-ctl` resolves the same value when it generates the
-Seam-1 override.
+deployments share a host. The add-on attaches no service of the core to it.
 
 ## Components
 
@@ -100,13 +109,33 @@ git clone https://github.com/Fidonis/papaia-addon-paperless-connect addons/paper
 # 2. Install — seeds .env in the config bundle, registers in deployment.yaml, renders config
 papaia-ctl addon install paperless-connect --path=addons/paperless-connect
 
-# 3. Follow the Keycloak checklist printed by install (see below)
+# 3. Edit CHANGE_ME values in <papaia-config>/addons/paperless-connect/.env
 
-# 4. Edit CHANGE_ME values in <papaia-config>/addons/paperless-connect/.env
-
-# 5. Start the addon
+# 4. Start the addon
 papaia-ctl addon start paperless-connect
 ```
+
+With the bundled Keycloak, `papaia-ctl` creates the client `mcp-paperless` from the
+manifest's `exposes:` entry; nothing is imported by hand. With an external identity
+provider, create it by hand (step 2 below).
+
+### Chat access (operator opt-in)
+
+The catalog lists this add-on with `trust: addon`, because it relies on your proxy and is
+not part of the acceptance of the suite. After installation the chat therefore has **no**
+entry for `mcp-paperless`, and the `librechat` client carries no `mcp-paperless` audience:
+the token the chat shares with the servers of the suite never reaches this server.
+
+To let the chat use the archive, allow the add-on with the core's opt-in:
+
+```bash
+papaia-ctl addon chat allow paperless-connect
+```
+
+The core then forwards chat calls through its chat relay, with a token for the audience
+`mcp-paperless` only; where the core requires a second person's approval, the opt-in waits
+for it. `papaia-ctl addon chat revoke paperless-connect` withdraws it. See the core's
+operator handbook for the details.
 
 ---
 
@@ -137,91 +166,80 @@ Keycloak.
 
 ### 2. Register Keycloak client
 
-In the Keycloak admin UI, create one client in the `papaia` realm:
+With the bundled Keycloak, `papaia-ctl` creates this client itself from the manifest's
+`exposes:` entry (realm sync on every start). Create it by hand only with an external
+identity provider, in the `papaia` realm:
 
-**Client `mcp-paperless`** (resource server, no flows):
+**Client `mcp-paperless`** (bearer-only resource server, no flows):
 - Client ID: `mcp-paperless`
-- No redirect URIs
-- All flows disabled
-- (see `integration/infra/keycloak/mcp-paperless.json`)
+- Client authentication on, no redirect URIs
+- Standard flow, implicit flow, direct access grants and service accounts off
+- Full scope allowed off
 
-**Audience mapper on the `librechat` client — mandatory, do not skip:**
-Add a protocol mapper of type *Audience* to the existing `librechat` client:
-- Name: `mcp-paperless-audience`
-- Included Client Audience: `mcp-paperless`
-- Add to access token: yes
-- (see `integration/infra/keycloak/librechat-audience-mapper.json`)
+Do **not** add an audience mapper for `mcp-paperless` to the `librechat` client, do not
+attach `librechat` to the add-on's network and do not add an `mcpServers` entry for it by
+hand. Each would give the chat a direct path to this server past the operator opt-in, and
+the shared chat token, which carries the audiences of every server of the suite, would
+reach a server outside the suite. Chat access goes only through the opt-in
+([Chat access](#chat-access-operator-opt-in)).
 
-> **Why this step is security-critical.** This mapper is the only thing that puts
-> `mcp-paperless` into the `aud` claim of the access token LibreChat forwards. `paperless-mcp`
-> rejects any token whose audience does not match `PAPERLESS_MCP_OIDC_AUDIENCE`, so without the
-> mapper every MCP call fails with `401 invalid_token`.
->
-> Verify it with **Clients → librechat → Client scopes → Evaluate**: generate an access token and
-> confirm `mcp-paperless` appears in `aud`. Checking the *Dedicated* mappers tab alone is not
-> sufficient — a mapper can also arrive through an assigned client scope.
->
-> Older `paperless-mcp-rbac` releases (before the audience hardening fix) accepted tokens that
-> carried **no** `aud` claim at all, which made a missing mapper look like a working setup while
-> in fact any token from the realm was accepted. If you are upgrading and MCP calls suddenly
-> return 401, the mapper is what you are missing.
+`paperless-mcp` rejects any token whose audience does not match
+`PAPERLESS_MCP_OIDC_AUDIENCE` (`401 invalid_token`).
 
-### 3. Wire the network (Seam 1)
-
-`papaia-ctl` writes this override for you (`papaia-ctl addon install paperless-connect`),
-resolving the network name from `PAPAIA_PROJECT` in the core `.env`. To wire it by hand,
-attach `librechat` to the same network the add-on creates:
-
-```yaml
-# papaia-config/overrides/docker-compose.paperless-connect.override.yml
-services:
-  librechat:
-    networks:
-      - ${PAPAIA_PROJECT:-papaia}-paperless-connect-net
-networks:
-  ${PAPAIA_PROJECT:-papaia}-paperless-connect-net:
-    external: true
-```
-
-Start the addon network first (creates the Docker network):
+### 3. Start the add-on
 
 ```bash
 docker compose -f addons/paperless-connect/docker-compose.yml up -d
 ```
 
-Then restart the core stack to pick up the override:
+---
 
-```bash
-docker compose -f papaia/src/docker-compose.yml \
-  -f papaia-config/overrides/docker-compose.paperless-connect.override.yml \
-  up -d
-```
+## Catalog entry (`exposes:`)
 
-### 4. Add the MCP server to LibreChat (Seam 3)
+The manifest describes the MCP server once, in `exposes:` (contract generation 7,
+schema `exposes.v1` of papaia-kit). The core renders the platform catalog from it,
+and every module that talks to Paperless reads the catalog instead of keeping its
+own description of the server.
 
-Add the following to your effective `librechat.yaml`
-(or to `papaia-config/overlay/ai/librechat/librechat.yaml`):
+The add-on runs the same tool server as the bundled `paperless` add-on, so the entry
+keeps its id, audience and operations: a module that uses `paperless.documents` works
+with either add-on. The two add-ons are alternatives; the core refuses an installation
+with both (one id and one audience per installation).
 
-```yaml
-mcpServers:
-  Paperless:
-    title: 'Paperless'
-    description: 'OIDC-secured document management via Paperless-ngx.'
-    type: streamable-http
-    url: http://paperless-mcp:8000/mcp
-    headers:
-      Authorization: "Bearer {{LIBRECHAT_OPENID_ACCESS_TOKEN}}"
-    startup: false
-```
+| Field | Value |
+|---|---|
+| `id` | `paperless.documents` |
+| Address | `paperless-mcp:8000/mcp` (internal) |
+| Audience | `mcp-paperless` |
+| Identity | the person, or a service account a consuming module declares |
+| Operations | every tool of `paperless-mcp-rbac`, with effect (`read`, `write`, `delete`), input schema and highest data class, the same as in the `paperless` add-on; `delete_document` is confirmed with `check_access` first |
+| Standard operations | `describe_access`, `check_access` |
+| Header identity | `header_identity: false`: `paperless-mcp` accepts only a verified bearer token. The header `X-Papaia-Remote-User` is read by your Paperless, which this add-on does not run |
 
-Also add `paperless-mcp:8000` to `mcpSettings.allowedDomains`:
+The core creates the resource-server client `mcp-paperless` from this entry. The add-on
+ships no chat entry, no audience mapper and no client of its own, and has no
+`integration/` files. Because the catalog entry has `trust: addon`, the core renders no
+chat entry and no `librechat` audience mapper for it; the chat reaches it only through the
+opt-in.
 
-```yaml
-mcpSettings:
-  allowedDomains:
-    - "http://paperless-mcp:8000"
-    # ... keep any existing entries
-```
+Data classes use the eight-class scale of papaia-kit. A general archive can hold health
+data (Art. 9 GDPR) and secrets entrusted to professions bound to confidentiality
+(Section 203 StGB), and Paperless sets no limit on what is filed. Every operation that
+carries documents, their text, titles, metadata or notes therefore declares the highest
+class, `professional_secret`; correspondents are `partner_contact`, tags and document
+types `internal`. A Studio app, a Flow run or a model that is cleared only up to a lower
+class cannot call these operations.
+
+### Personal data
+
+The add-on keeps no data of its own and has no named volume: `storage` declares
+`personal_data: false`, and there is no backup item and no exit export. Documents, notes
+and accounts stay in your Paperless, outside the papaia installation; record them in that
+system's own records of processing, backup and erasure procedures.
+
+`describe_access` and `check_access` need a `paperless-mcp-rbac` release that serves
+them; with the 0.1 releases pinned here a call to them fails at the server, and every
+consumer that follows the contract refuses `delete_document` (fails closed).
 
 ---
 
@@ -245,7 +263,7 @@ Or manually:
 
 ```bash
 docker compose -f addons/paperless-connect/docker-compose.yml down
-# Remove the compose override and re-render papaia config
+# Then re-render the papaia config
 ```
 
 ---
@@ -254,8 +272,9 @@ docker compose -f addons/paperless-connect/docker-compose.yml down
 
 - **Network isolation:** `paperless-mcp` runs on the add-on's own bridge
   (`papaia-paperless-connect-net`, or `papaia-<env>-paperless-connect-net` — one per
-  deployment on a shared host), isolated from the papaia core network. Only `librechat` is
-  attached to it via the generated compose override.
+  deployment on a shared host), isolated from the papaia core network. The add-on attaches
+  no service of the core; only after the operator opt-in does the core put its chat relay
+  on this network.
 - **OIDC at the data boundary:** `paperless-mcp` validates every incoming Bearer token against
   Keycloak before forwarding requests to Paperless. No admin credentials are stored in the MCP
   layer.
@@ -269,7 +288,7 @@ docker compose -f addons/paperless-connect/docker-compose.yml down
 
 ## Known limitations
 
-- **`mcpSettings.allowedDomains`** must be updated manually (or via overlay) when adding this
-  addon alongside other MCP addons. The papaia config render merges dict keys but replaces lists
-  wholesale; a fix is tracked in the papaia repository.
-- **Keycloak client registration** is not automated in this version; see step 2 above.
+- **External identity provider:** the client `mcp-paperless` is created by hand (step 2
+  above).
+- **Chat:** no chat access without the operator opt-in
+  ([Chat access](#chat-access-operator-opt-in)).

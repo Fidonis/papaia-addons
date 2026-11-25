@@ -2,14 +2,19 @@ name: paperless-connect
 version: 2.0.1
 addon_repo: papaia-addon-paperless-connect
 requires:
-  # Contract generation this addon is built against; checked against the
-  # core's ADDON_API window by cores that support compatibility gating.
-  # 2: networks.app_network carries a ${PAPAIA_PROJECT:-papaia} template
-  # that the core resolves against its .env (needs a core serving addon_api 2).
-  addon_api: 2
-# Fallback axis for cores that do not read `requires` yet. 1.3.0 is the first
-# core serving addon_api 2 (deployment-scoped add-on networks).
-papaia_compat: ">=1.3.0"
+  # Contract generations this add-on is built against; checked against the
+  # core's ADDON_API window. Generations are cumulative. The add-on uses
+  # `exposes:` (7) and declares 12, the generation every module add-on of
+  # this release is built against. Meanings as in the core's table:
+  #   7  `exposes:` (also `exposes.yaml` of core profiles), rendering of `services.json` and
+  #      `groups.json`, declared roles, exchange scopes `aud-<addon>`, service accounts,
+  #      `models.needs`; `keycloak`, `litellm`, `papaia-audit`, `papaia-egress` attachable
+  #      (ADR 0017, 0018)
+  #   12  add-on ingress `integration.nginx` (ADR 0023)
+  addon_api: [12]
+# Fallback axis for cores that do not read `requires` yet. 1.10.0 is the first
+# core serving addon_api 12.
+papaia_compat: ">=1.10.0"
 description: "OIDC/RBAC MCP server for an existing standalone Paperless-ngx instance"
 
 # The software this add-on packages. `version` above counts the add-on itself;
@@ -29,7 +34,12 @@ networks:
   # compose network name. Scopes the Seam-1 bridge per deployment; a default
   # single-stack host resolves it to papaia-paperless-connect-net.
   app_network: "${PAPAIA_PROJECT:-papaia}-paperless-connect-net"
-  attach: [librechat]
+  # Nothing of the core is attached. The add-on is outside the suite
+  # (`trust: addon`): the chat reaches it only after the operator opt-in
+  # (`papaia-ctl addon chat allow paperless-connect`), through the core's chat
+  # relay, which the core puts on app_network itself. Attaching librechat here
+  # would be a direct path past that opt-in, and the core refuses the opt-in
+  # for an add-on that declares one.
 
 # SSL_CERT_FILE defaults to empty (system trust store) in docker-compose.yml;
 # it is opt-in via PAPERLESS_MCP_SSL_CERT_FILE for a local-dev core whose
@@ -64,7 +74,7 @@ env_prompts:
   # ── MCP server ────────────────────────────────────────────────────────────
   PAPERLESS_MCP_OIDC_AUDIENCE:
     label: "MCP server token audience"
-    hint: "Must match the mcp-paperless-audience mapper on the LibreChat Keycloak client"
+    hint: "Must equal the audience in exposes (mcp-paperless); tokens for it come from the core, never from the shared chat token"
     type: text
 
   PAPERLESS_MCP_OIDC_JWKS_CACHE_TTL:
@@ -115,11 +125,356 @@ env_prompts:
     hint: "One of: DEBUG, INFO, WARNING, ERROR"
     type: text
 
-integration:
-  keycloak:
-    clients:
-      - integration/infra/keycloak/mcp-paperless.json
-    client_mappers:
-      librechat:
-        - integration/infra/keycloak/librechat-audience-mapper.json
-  librechat: integration/ai/librechat/librechat.yaml
+# The one description of what this add-on offers (contract generation 7,
+# schema exposes.v1 of papaia-kit). The core renders the platform catalog from
+# it and creates the resource-server client `mcp-paperless` (realm sync).
+# The add-on runs the same tool server as `paperless` (paperless-mcp-rbac) in
+# front of an existing Paperless-ngx, so the entry keeps the id, audience and
+# operations of `paperless`: a consumer binds to `paperless.documents` either
+# way. The two add-ons are alternatives; installing both is refused by the core
+# (one id and one audience per installation). `operations` lists every tool
+# paperless-mcp-rbac reports in `tools/list`, plus the standard operations
+# `describe_access` and `check_access`. Rights are checked by Paperless for the
+# person (or service account) in the token on every call; `data_class_max` is
+# the highest class an operation returns or accepts, on the kit's eight-class
+# scale. A general archive can hold health data (Art. 9 GDPR) and professional
+# secrets (Section 203 StGB), and Paperless enforces no class limit, so every
+# operation that carries document content or titles declares
+# `professional_secret`.
+exposes:
+  - id: paperless.documents
+    kind: mcp
+    title: {de: "Dokumentenarchiv", en: "Document archive"}
+    description:
+      de: "Dokumente im bestehenden Paperless suchen, lesen, ablegen und mit Notizen versehen, mit den Rechten der Person."
+      en: "Search, read, file and annotate documents in the existing Paperless with the rights of the person."
+    address: {service: paperless-mcp, port: 8000, scheme: http, path: /mcp}
+    audience: mcp-paperless
+    # `service`: event-started runs read through a declared service account of
+    # the consuming module, never with a person's identity.
+    identity: [person, service]
+    # paperless-mcp accepts only a verified bearer token, never an identity
+    # header. The header `X-Papaia-Remote-User` is read by the existing
+    # Paperless, which this add-on does not run; securing it is the job of the
+    # customer's proxy (README, Prerequisites).
+    header_identity: false
+    standard_operations: [describe_access, check_access]
+    operations:
+      - name: search_documents
+        version: 1
+        title: {de: "Dokumente suchen", en: "Search documents"}
+        via: tools
+        effect: read
+        retry: safe
+        input_schema:
+          type: object
+          additionalProperties: false
+          properties:
+            query: {type: string, maxLength: 500}
+            page: {type: integer, minimum: 1}
+            page_size: {type: integer, minimum: 1, maximum: 100}
+            # A field name, optionally descending; Paperless checks the field.
+            ordering: {type: string, pattern: "^-?[a-z_]{1,40}$"}
+        output_schema: {type: object}
+        data_class_max: professional_secret
+        rights_check: server
+        timeout: 30s
+      - name: get_document
+        version: 1
+        title: {de: "Dokument lesen", en: "Read document"}
+        via: tools
+        effect: read
+        retry: safe
+        input_schema:
+          type: object
+          additionalProperties: false
+          required: [id]
+          properties:
+            id: {type: integer, minimum: 1}
+        output_schema: {type: object}
+        data_class_max: professional_secret
+        resource: {type: document, id_field: id}
+        rights_check: server
+        timeout: 30s
+      - name: get_document_metadata
+        version: 1
+        title: {de: "Metadaten lesen", en: "Read metadata"}
+        via: tools
+        effect: read
+        retry: safe
+        input_schema:
+          type: object
+          additionalProperties: false
+          required: [id]
+          properties:
+            id: {type: integer, minimum: 1}
+        output_schema: {type: object}
+        data_class_max: professional_secret
+        resource: {type: document, id_field: id}
+        rights_check: server
+        timeout: 30s
+      - name: get_document_content
+        version: 1
+        title: {de: "Text eines Dokuments lesen", en: "Read document text"}
+        via: tools
+        effect: read
+        retry: safe
+        input_schema:
+          type: object
+          additionalProperties: false
+          required: [id]
+          properties:
+            id: {type: integer, minimum: 1}
+        output_schema: {type: object}
+        data_class_max: professional_secret
+        resource: {type: document, id_field: id}
+        rights_check: server
+        timeout: 30s
+      - name: download_document
+        version: 1
+        title: {de: "Originaldatei laden", en: "Download original file"}
+        via: tools
+        effect: read
+        retry: safe
+        input_schema:
+          type: object
+          additionalProperties: false
+          required: [id]
+          properties:
+            id: {type: integer, minimum: 1}
+        output_schema: {type: object}
+        data_class_max: professional_secret
+        resource: {type: document, id_field: id}
+        rights_check: server
+        timeout: 30s
+      - name: list_tags
+        version: 1
+        title: {de: "Schlagwörter auflisten", en: "List tags"}
+        via: tools
+        effect: read
+        retry: safe
+        input_schema: {type: object, additionalProperties: false}
+        output_schema: {type: object}
+        data_class_max: internal
+        rights_check: server
+        timeout: 30s
+      - name: list_correspondents
+        version: 1
+        title: {de: "Korrespondenten auflisten", en: "List correspondents"}
+        via: tools
+        effect: read
+        retry: safe
+        input_schema: {type: object, additionalProperties: false}
+        output_schema: {type: object}
+        data_class_max: partner_contact
+        rights_check: server
+        timeout: 30s
+      - name: list_document_types
+        version: 1
+        title: {de: "Dokumenttypen auflisten", en: "List document types"}
+        via: tools
+        effect: read
+        retry: safe
+        input_schema: {type: object, additionalProperties: false}
+        output_schema: {type: object}
+        data_class_max: internal
+        rights_check: server
+        timeout: 30s
+      - name: get_notes
+        version: 1
+        title: {de: "Notizen lesen", en: "Read notes"}
+        via: tools
+        effect: read
+        retry: safe
+        input_schema:
+          type: object
+          additionalProperties: false
+          required: [id]
+          properties:
+            id: {type: integer, minimum: 1}
+        output_schema: {type: object}
+        data_class_max: professional_secret
+        resource: {type: document, id_field: id}
+        rights_check: server
+        timeout: 30s
+      - name: upload_document
+        version: 1
+        title: {de: "Dokument ablegen", en: "File document"}
+        via: tools
+        effect: write
+        retry: at_most_once
+        input_schema:
+          type: object
+          additionalProperties: false
+          required: [file_base64, filename]
+          properties:
+            # 100 MiB as base64, as for the bundled add-on; the proxy in front of
+            # the existing Paperless may set a lower limit.
+            file_base64: {type: string, contentEncoding: base64, minLength: 4, maxLength: 139810136}
+            filename: {type: string, minLength: 1, maxLength: 255}
+            title: {type: string, maxLength: 128}
+            correspondent: {type: integer, minimum: 1}
+            document_type: {type: integer, minimum: 1}
+            tags:
+              type: array
+              maxItems: 100
+              uniqueItems: true
+              items: {type: integer, minimum: 1}
+            created: {type: string, format: date, maxLength: 32}
+        output_schema: {type: object}
+        data_class_max: professional_secret
+        resource: {type: document}
+        rights_check: server
+        timeout: 30s
+      - name: update_document
+        version: 1
+        title: {de: "Dokument ändern", en: "Update document"}
+        via: tools
+        effect: write
+        retry: idempotent
+        input_schema:
+          type: object
+          additionalProperties: false
+          required: [id]
+          properties:
+            id: {type: integer, minimum: 1}
+            title: {type: string, maxLength: 128}
+            tags:
+              type: array
+              maxItems: 100
+              uniqueItems: true
+              items: {type: integer, minimum: 1}
+            correspondent: {type: integer, minimum: 1}
+            document_type: {type: integer, minimum: 1}
+            owner: {type: integer, minimum: 1}
+            custom_fields:
+              type: array
+              maxItems: 100
+              items:
+                type: object
+                additionalProperties: false
+                required: [field, value]
+                properties:
+                  field: {type: integer, minimum: 1}
+                  # Text, number, date, monetary, boolean, select, empty, or
+                  # the document ids of a link field.
+                  value:
+                    type: [string, integer, number, boolean, "null", array]
+                    maxLength: 10000
+                    maxItems: 100
+                    items: {type: integer, minimum: 1}
+        output_schema: {type: object}
+        data_class_max: professional_secret
+        resource: {type: document, id_field: id}
+        rights_check: server
+        timeout: 30s
+      - name: delete_document
+        version: 1
+        title: {de: "Dokument löschen", en: "Delete document"}
+        via: tools
+        effect: delete
+        retry: idempotent
+        input_schema:
+          type: object
+          additionalProperties: false
+          required: [id]
+          properties:
+            id: {type: integer, minimum: 1}
+        output_schema: {type: object}
+        data_class_max: professional_secret
+        resource: {type: document, id_field: id}
+        rights_check: server_and_check_access
+        timeout: 30s
+      - name: add_note
+        version: 1
+        title: {de: "Notiz anfügen", en: "Add note"}
+        via: tools
+        effect: write
+        retry: at_most_once
+        input_schema:
+          type: object
+          additionalProperties: false
+          required: [id, note]
+          properties:
+            id: {type: integer, minimum: 1}
+            note: {type: string, minLength: 1, maxLength: 5000}
+        output_schema: {type: object}
+        data_class_max: professional_secret
+        resource: {type: document, id_field: id}
+        rights_check: server
+        timeout: 30s
+      - name: create_tag
+        version: 1
+        title: {de: "Schlagwort anlegen", en: "Create tag"}
+        via: tools
+        effect: write
+        retry: at_most_once
+        input_schema:
+          type: object
+          additionalProperties: false
+          required: [name]
+          properties:
+            name: {type: string, minLength: 1, maxLength: 128}
+            color: {type: string, pattern: "^#[0-9a-fA-F]{6}$"}
+        output_schema: {type: object}
+        data_class_max: internal
+        resource: {type: tag}
+        rights_check: server
+        timeout: 30s
+      - name: create_correspondent
+        version: 1
+        title: {de: "Korrespondent anlegen", en: "Create correspondent"}
+        via: tools
+        effect: write
+        retry: at_most_once
+        input_schema:
+          type: object
+          additionalProperties: false
+          required: [name]
+          properties:
+            name: {type: string, minLength: 1, maxLength: 128}
+        output_schema: {type: object}
+        data_class_max: partner_contact
+        resource: {type: correspondent}
+        rights_check: server
+        timeout: 30s
+      - name: describe_access
+        version: 1
+        title: {de: "Eigene Rechte anzeigen", en: "Describe own access"}
+        via: tools
+        effect: read
+        retry: safe
+        input_schema: {type: object, additionalProperties: false}
+        output_schema: {type: object}
+        data_class_max: internal
+        rights_check: server
+        timeout: 30s
+      - name: check_access
+        version: 1
+        title: {de: "Rechte prüfen", en: "Check access"}
+        via: tools
+        effect: check
+        retry: safe
+        input_schema:
+          type: object
+          additionalProperties: false
+          required: [resources, right]
+          properties:
+            resources:
+              type: array
+              minItems: 1
+              maxItems: 100
+              items: {type: integer, minimum: 1}
+            right: {enum: [read, write, delete]}
+        output_schema: {type: object}
+        data_class_max: internal
+        resource: {type: document, id_field: resources}
+        rights_check: server
+        timeout: 30s
+    requires:
+      addon_api: [12]
+    # No named volume and no data of its own: documents, notes and accounts stay
+    # in the existing Paperless, outside this installation. Its operator declares
+    # them in its own records of processing (README, Personal data).
+    storage:
+      personal_data: false

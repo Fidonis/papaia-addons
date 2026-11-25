@@ -626,6 +626,42 @@ class PaperlessConnectTests(unittest.TestCase):
         hint = self.manifest["env_prompts"]["PAPERLESS_MCP_OIDC_AUDIENCE"]["hint"]
         self.assertNotIn("LibreChat token", hint)
 
+    def chat_access_section(self) -> str:
+        readme = (self.path / "README.md").read_text(encoding="utf-8")
+        start = readme.index("### Chat access (operator opt-in)")
+        end = readme.index("\n## ", start)
+        return readme[start:end]
+
+    def test_operator_docs_walk_through_the_chat_opt_in(self) -> None:
+        # The steps an operator runs, what the chat then reaches and how to withdraw it.
+        section = self.chat_access_section()
+        for step in (
+            "papaia-ctl addon chat allow paperless-connect",
+            "--approve=mcp-paperless",
+            "second host account",
+            "papaia-ctl addon chat list",
+            "papaia-ctl start",
+            "papaia-ctl addon chat revoke paperless-connect",
+        ):
+            self.assertIn(step, section)
+        self.assertIn("http://papaia-chat-relay:8080/servers/mcp-paperless/mcp", section)
+        self.assertIn("`professional_secret`", section)
+        self.assertIn("never receives the shared chat token", section)
+        self.assertIn("aud-mcp-paperless", section)
+        # Every tool the chat can call after the opt-in is named with its effect.
+        for op in self.entry()["operations"]:
+            if op.get("via") == "tools":
+                self.assertRegex(section, rf"\| `{op['name']}` \| {op['effect']} \|", op["name"])
+        # The proxy of the customer stays in the picture: the opt-in changes nothing there.
+        self.assertIn("X-Papaia-Remote-User", section)
+        self.assertIn("[Prerequisites](#prerequisites)", section)
+
+    def test_changelog_names_the_chat_opt_in_walkthrough(self) -> None:
+        changelog = (self.path / "CHANGELOG.md").read_text(encoding="utf-8")
+        unreleased = changelog[changelog.index("## [Unreleased]"):changelog.index("## [2.0.1]")]
+        self.assertIn("papaia-ctl addon chat revoke paperless-connect", unreleased)
+        self.assertIn("second host account", unreleased)
+
 
 class RepositoryTests(unittest.TestCase):
     def test_no_manifest_carries_the_undecided_marker(self) -> None:

@@ -64,42 +64,91 @@ setup_code, _ = run("setup", "--env=papaia", *inst.flags)
 install_code, install_out = run("addon-install", "--name", name, "--path", str(addon))
 check_code, check_out = run("addon-check")
 
-librechat = yaml.safe_load(
-    (inst.config / "ai/librechat/librechat.yaml").read_text(encoding="utf-8")) or {}
-realm = json.loads((inst.config / "infra/keycloak/realm-import/papaia-realm.json")
-                   .read_text(encoding="utf-8"))
-librechat_client = next(c for c in realm["clients"] if c["clientId"] == "librechat")
-catalog = json.loads((inst.config / "platform/services.json").read_text(encoding="utf-8"))
-entry = next((e for e in catalog["services"] if e["id"] == "paperless.documents"), {})
+# What the core rendered for the chat, the realm and the chat relay right now.
+def snapshot():
+    librechat = yaml.safe_load(
+        (inst.config / "ai/librechat/librechat.yaml").read_text(encoding="utf-8")) or {}
+    realm = json.loads((inst.config / "infra/keycloak/realm-import/papaia-realm.json")
+                       .read_text(encoding="utf-8"))
+    librechat_client = next(c for c in realm["clients"] if c["clientId"] == "librechat")
+    relay_list = inst.config / "chat-relay/servers.json"
+    overrides = inst.config / "overrides"
+    return {
+        "servers": librechat.get("mcpServers") or {},
+        "allowed": (librechat.get("mcpSettings") or {}).get("allowedDomains") or [],
+        "mappers": {m["name"]: m for m in librechat_client.get("protocolMappers") or []},
+        "realm_clients": sorted(c["clientId"] for c in realm["clients"]),
+        # Generated compose overrides that put librechat on a network of this add-on.
+        "chat_override": sorted(
+            str(p.relative_to(inst.config)) for p in overrides.rglob("*.yml")
+            if any(name in str(n) for n in chat_networks(p))) if overrides.is_dir() else [],
+        # The overrides the core writes for its chat relay, with their services.
+        "relay_overrides": {
+            p.name: yaml.safe_load(p.read_text(encoding="utf-8"))
+            for p in sorted(overrides.glob("docker-compose.chat-relay-*.override.yml"))
+        } if overrides.is_dir() else {},
+        "relay_list": (json.loads(relay_list.read_text(encoding="utf-8"))
+                       if relay_list.is_file() else None),
+    }
 
 def chat_networks(path):
     services = (yaml.safe_load(path.read_text(encoding="utf-8")) or {}).get("services") or {}
     return (services.get("librechat") or {}).get("networks") or []
 
-# Generated compose overrides that put librechat on a network of this add-on.
-overrides = inst.config / "overrides"
-chat_override = sorted(
-    str(p.relative_to(inst.config)) for p in overrides.rglob("*.yml")
-    if any(name in str(n) for n in chat_networks(p))) if overrides.is_dir() else []
-print(json.dumps({
+catalog = json.loads((inst.config / "platform/services.json").read_text(encoding="utf-8"))
+entry = next((e for e in catalog["services"] if e["id"] == "paperless.documents"), {})
+result = {
     "setup": setup_code,
     "install": install_code,
     "install_out": [line for line in install_out.splitlines()
                     if "mapper" in line.lower() or "mcp-paperless" in line],
     "check": check_code,
     "check_out": [line for line in check_out.splitlines() if line.startswith(name + " ")],
-    "servers": librechat.get("mcpServers") or {},
-    "allowed": (librechat.get("mcpSettings") or {}).get("allowedDomains") or [],
-    "mappers": {m["name"]: m for m in librechat_client.get("protocolMappers") or []},
-    "realm_clients": sorted(c["clientId"] for c in realm["clients"]),
     "trust": entry.get("trust"),
     "address": entry.get("address"),
-    "chat_override": chat_override,
     "addon_manifest_dirs": [str(p.relative_to(inst.config))
                             for p in inst.config.rglob("addon-manifests")],
     "addon_integration_files": sorted(
         str(p.relative_to(addon)) for p in (addon / "integration").rglob("*") if p.is_file()),
-}))
+    **snapshot(),
+}
+
+if "optin" in sys.argv[5:]:
+    # The operator's opt-in, step by step, as two host accounts would run it.
+    from lib import pairing_approval, realm_sync
+
+    def as_person(login, *args):
+        pairing_approval.acting_person = lambda: "host:" + login
+        return run(*args)
+
+    def chat_rows():
+        path = realm_sync.audit_path(inst.config)
+        rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()
+                ] if path.is_file() else []
+        return [{k: r.get(k) for k in ("operation", "result", "error_code", "sub",
+                                         "object_ref", "data_class", "correlation_id")}
+                for r in rows if (r.get("operation") or "").startswith("chat_relay.")]
+
+    steps = {}
+    steps["running"] = run("addon-state", "--name", name, "--state", "running")[0]
+    steps["show"] = as_person("anna", "addon-chat-show", "--name", name)
+    steps["allow_wrong_audience"] = as_person(
+        "anna", "addon-chat-allow", "--name", name, "--approve=mcp-wiki")
+    steps["allow"] = as_person("anna", "addon-chat-allow", "--name", name,
+                               "--approve=mcp-paperless")
+    steps["waiting"] = snapshot()
+    steps["approve_same_person"] = as_person(
+        "anna", "addon-chat-allow", "--name", name, "--approve=mcp-paperless")
+    steps["approve"] = as_person("ben", "addon-chat-allow", "--name", name,
+                                 "--approve=mcp-paperless")
+    steps["allowed"] = snapshot()
+    steps["list"] = as_person("anna", "addon-chat-list", "--json")
+    steps["revoke"] = as_person("ben", "addon-chat-revoke", "--name", name)
+    steps["revoked"] = snapshot()
+    steps["audit"] = chat_rows()
+    result["optin"] = steps
+
+print(json.dumps(result))
 """
 
 
@@ -107,18 +156,23 @@ def core_tools() -> Path:
     return Path(CORE).resolve() / "tools"
 
 
-def install_on_core(test: type[unittest.TestCase], addon: Path) -> dict:
+def install_on_core(test: type[unittest.TestCase], addon: Path, *, opt_in: bool = False) -> dict:
     """Install the add-on in `addon` under its directory name on a temporary copy of the
-    core checkout and return what the core rendered. Skips the class when the checkout
-    does not generate chat entries."""
+    core checkout and return what the core rendered. With `opt_in`, the result also holds
+    `optin`: the operator's chat opt-in run step by step (allow, approval by a second host
+    account, revoke) and what the core rendered after each step. Skips the class when the
+    checkout does not generate chat entries."""
     tools = core_tools()
     if not (tools / "lib" / "chat_servers.py").is_file():
         raise unittest.SkipTest(f"{CORE} is not a core checkout that generates chat entries")
+    if opt_in and not (tools / "lib" / "chat_optin.py").is_file():
+        # The add-on requires papaia 1.10.0, which has the opt-in: a core without it fails.
+        raise AssertionError(f"{CORE} has no chat opt-in (papaia 1.10.0 or newer needed)")
     work = Path(tempfile.mkdtemp(prefix=f"{addon.name}-core-"))
     test.addClassCleanup(shutil.rmtree, work, True)
     proc = subprocess.run(
         ["uv", "run", "--locked", "--extra", "dev", "python", "-c", DRIVER,
-         str(work), str(addon), str(tools), addon.name],
+         str(work), str(addon), str(tools), addon.name, *(["optin"] if opt_in else [])],
         cwd=tools, capture_output=True, text=True, timeout=600, check=False,
     )
     if proc.returncode != 0:

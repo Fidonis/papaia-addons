@@ -12,6 +12,16 @@ operator has to do by hand are listed under `### Upgrade notes`.
   operations as the `paperless` add-on, with data classes, `header_identity:
   false` and `storage: {personal_data: false}`. The core creates the
   resource-server client `mcp-paperless` from it.
+- README, "Chat access (operator opt-in)": the operator's steps to let the chat
+  use the archive through the core's chat relay. One host account runs
+  `papaia-ctl addon chat allow paperless-connect`, a second host account
+  approves it with the same command (the add-on writes and deletes), and
+  `papaia-ctl start` applies it. The section names what the chat then reaches:
+  the relay entry, a token for `mcp-paperless` only, every tool with its effect
+  and data class, and the cap `professional_secret`. It also explains how
+  `papaia-ctl addon chat revoke paperless-connect` withdraws it. The add-on
+  never receives the shared chat token, and the identity header still reaches
+  your Paperless only through your proxy.
 
 ### Changed
 - **Breaking:** the add-on requires papaia 1.10.0 (`requires.addon_api: [12]`).

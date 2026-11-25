@@ -123,19 +123,97 @@ provider, create it by hand (step 2 below).
 
 The catalog lists this add-on with `trust: addon`, because it relies on your proxy and is
 not part of the acceptance of the suite. After installation the chat therefore has **no**
-entry for `mcp-paperless`, and the `librechat` client carries no `mcp-paperless` audience:
-the token the chat shares with the servers of the suite never reaches this server.
+entry for `mcp-paperless`, and the `librechat` client carries no `mcp-paperless` audience.
+The add-on never receives the shared chat token, the one token that carries the audiences
+of every server of the suite: not before the opt-in, and not after it.
 
-To let the chat use the archive, allow the add-on with the core's opt-in:
+The opt-in is off by default, recorded per add-on, and can be withdrawn at any time. It
+needs the add-on installed and started (`papaia-ctl addon start paperless-connect`).
+
+**1. Request.** One host account runs:
 
 ```bash
 papaia-ctl addon chat allow paperless-connect
 ```
 
-The core then forwards chat calls through its chat relay, with a token for the audience
-`mcp-paperless` only; where the core requires a second person's approval, the opt-in waits
-for it. `papaia-ctl addon chat revoke paperless-connect` withdraws it. See the core's
-operator handbook for the details.
+The command first shows what the chat would reach: the catalog entry
+`paperless.documents`, the audience `mcp-paperless`, every tool with its effect and data
+class, the data class cap `professional_secret`, and that a second host account must
+approve. It then asks you to confirm the audience that was shown. Without a terminal, name
+it yourself: `papaia-ctl addon chat allow paperless-connect --approve=mcp-paperless`.
+`-y` is refused. Because tools of this add-on write and delete, the opt-in now waits.
+
+**2. Approval.** A second host account (another login on the host) runs the same command.
+The account that asked is refused. Only then does the opt-in take effect. The four-eyes
+rule (`approvals.four_eyes`, always on in the profile `kritis`) adds nothing here, because
+this add-on always needs the second account.
+
+**3. Check and apply.** `papaia-ctl addon chat list` shows the opt-in with its state
+(`waiting for approval`, `allowed`, or `allowed, not served` with the reason). Then run
+`papaia-ctl start`. It grants the core's chat relay the scope `aud-mcp-paperless`, puts
+the relay on the add-on's network (`papaia-paperless-connect-net` on a default host), and
+lets LibreChat read the new entry. With an external identity provider the core does not
+manage the realm: create the relay's scope `aud-mcp-paperless` and its exchange rights
+there by hand, as the core's `docs/chat-relay.md` describes; until then the relay refuses
+every call.
+
+**What the chat then reaches.** The chat gets one entry, `mcp-paperless` ("Document
+archive"). It points to the core's chat relay,
+`http://papaia-chat-relay:8080/servers/mcp-paperless/mcp`, never to `paperless-mcp`, and its
+description ends with `Data class up to: professional_secret.`. For every call the relay
+exchanges the person's chat token for a token for this server alone: audience exactly
+`mcp-paperless`, `papaia-chat-relay` as the authorized party, and the same person.
+`paperless-mcp` verifies that token and acts for the person in Paperless, which checks the
+person's rights on every call. The relay serves only the tools of the catalog entry below, with the input schemas of
+the catalog, and refuses any other method. Only the relay joins the add-on's network,
+`librechat` never does. The catalog entry keeps `trust: addon`.
+
+| Tool | Effect | Data class up to |
+|---|---|---|
+| `search_documents` | read | `professional_secret` |
+| `get_document` | read | `professional_secret` |
+| `get_document_metadata` | read | `professional_secret` |
+| `get_document_content` | read | `professional_secret` |
+| `download_document` | read | `professional_secret` |
+| `list_tags` | read | `internal` |
+| `list_correspondents` | read | `partner_contact` |
+| `list_document_types` | read | `internal` |
+| `get_notes` | read | `professional_secret` |
+| `upload_document` | write | `professional_secret` |
+| `update_document` | write | `professional_secret` |
+| `delete_document` | delete | `professional_secret` |
+| `add_note` | write | `professional_secret` |
+| `create_tag` | write | `internal` |
+| `create_correspondent` | write | `partner_contact` |
+| `describe_access` | read | `internal` |
+| `check_access` | check | `internal` |
+
+Documents of the highest class, `professional_secret`, then reach the chat and the models it
+uses. Allow the opt-in only where those models are cleared for that class.
+
+**Your proxy stays in charge of the identity header.** The opt-in changes nothing between
+`paperless-mcp` and your Paperless: `X-Papaia-Remote-User` still reaches your Paperless only
+through your proxy, and the proxy must still reject it from anyone else (see
+[Prerequisites](#prerequisites)). This variant stays outside the acceptance of the suite
+with or without the opt-in.
+
+**Revoke.** Any host account withdraws the opt-in, whether it is waiting or allowed:
+
+```bash
+papaia-ctl addon chat revoke paperless-connect
+```
+
+From that moment the relay refuses every call to the add-on. The chat entry and the relay's
+scope go at the next `papaia-ctl start`. `papaia-ctl addon uninstall paperless-connect`
+removes the opt-in as well. `papaia-ctl addon stop paperless-connect` takes the add-on off
+the relay's list while the opt-in stays recorded, and starting the add-on again brings it
+back. If an upgrade of the add-on declares tools with other effects, the opt-in is no
+longer served until you revoke it and allow it again.
+
+**Audit.** Every request, approval, refusal and revoke is one `papaia.audit/1` row
+(`chat_relay.allow`, `chat_relay.approve`, `chat_relay.revoke`) with the host account, the
+add-on and the data class cap. No row holds a token or document content. The core's
+operator handbook (`docs/chat-relay.md` of papaia) describes the relay itself.
 
 ---
 
@@ -289,6 +367,7 @@ docker compose -f addons/paperless-connect/docker-compose.yml down
 ## Known limitations
 
 - **External identity provider:** the client `mcp-paperless` is created by hand (step 2
-  above).
+  above), and so are the chat relay's scope `aud-mcp-paperless` and its exchange rights for
+  the chat opt-in.
 - **Chat:** no chat access without the operator opt-in
   ([Chat access](#chat-access-operator-opt-in)).

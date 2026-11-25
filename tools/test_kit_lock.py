@@ -1,9 +1,10 @@
 """Tests for the pinned CI tool set (kit.lock, tools/ci/uv.lock).
 
-The repository vendors papaia-kit 0.1.1, the patch release after the first
-public kit release 0.1.0. The release record of that version (kit commit,
-SOURCE_DATE_EPOCH and the sha256 of the wheel in the release's SHA256SUMS) is
-pinned here, so a different build of the same version number cannot slip in.
+The repository vendors the final papaia-kit 0.1.0, the kit's first release.
+An earlier build carried the same version number, so only the release record
+tells them apart: kit commit, SOURCE_DATE_EPOCH and the sha256 of the wheel in
+the release's SHA256SUMS are pinned here, so a different build of the same
+version number cannot slip in.
 """
 
 from __future__ import annotations
@@ -22,19 +23,26 @@ CI_PROJECT = REPO_ROOT / "tools" / "ci"
 VENDOR = REPO_ROOT / "vendor" / "papaia-kit"
 HASH = re.compile(r"^sha256:[0-9a-f]{64}$")
 
-# Release record of papaia-kit 0.1.1.
-RELEASE_VERSION = "0.1.1"
-RELEASE_COMMIT = "14b9c833fc2208777f6304a8bda3a4c2f9cba990"
-RELEASE_EPOCH = 1795559077
-RELEASE_WHEEL = "papaia_kit-0.1.1-py3-none-any.whl"
-RELEASE_WHEEL_SHA256 = "372c50d7a974b9c48ef9b9ece474fe65fd6bc20a19b6bd9b9d283c9a1b802492"
+# Release record of the final papaia-kit 0.1.0.
+RELEASE_VERSION = "0.1.0"
+RELEASE_COMMIT = "849e344064472d94a5c934170f58162ef296c94c"
+RELEASE_EPOCH = 1795592298
+RELEASE_WHEEL = "papaia_kit-0.1.0-py3-none-any.whl"
+RELEASE_WHEEL_SHA256 = "7ecccf90d47cce795a5b07712f9f4806839dcd0211aba71bf2f16eb6e7b1211e"
 
-# Kit version numbers that were never published: major 0, minor 1 with patch 2
-# to 9, minor 2 with any patch, and both minor series written with "x". Built
-# from parts so this file names none of them.
+# Kit version numbers that were never published: major 0, minor 1 with patch 1
+# to 9 (local cuts, folded into 0.1.0), minor 2 with any patch, and both minor
+# series written with "x". Built from parts so this file names none of them.
 _ZERO = "0"
 UNPUBLISHED = re.compile(
-    rf"(?<![\w.]){_ZERO}\.(?:1\.[2-9]|2\.[0-9]|[12]\.x)(?![\w-]|\.\d)"
+    rf"(?<![\w.]){_ZERO}\.(?:1\.[1-9]|2\.[0-9]|[12]\.x)(?![\w-]|\.\d)"
+)
+# Kit commits of builds the final 0.1.0 replaces: the earlier 0.1.0 build and
+# the two local cuts. Abbreviated to seven characters and built from parts, so
+# this file names none of them; any longer spelling starts with the prefix.
+SUPERSEDED_COMMITS = re.compile(
+    r"(?<![0-9a-f])(?:" + "|".join(("0ce" + "4127", "14b" + "9c83", "fd6" + "9b66")) + r")",
+    re.IGNORECASE,
 )
 KIT_WORD = re.compile(r"kit", re.IGNORECASE)
 KIT_PATH = re.compile(r"papaia[-_]kit[-/](?P<version>\d+\.\d+\.\d+)")
@@ -76,7 +84,7 @@ def kit_version_findings(text: str) -> list[str]:
     """Lines that name a kit version other than the vendored release."""
     findings = []
     for number, line in enumerate(text.splitlines(), 1):
-        if KIT_WORD.search(line) and UNPUBLISHED.search(line):
+        if (KIT_WORD.search(line) and UNPUBLISHED.search(line)) or SUPERSEDED_COMMITS.search(line):
             findings.append(f"{number}: {line.strip()}")
             continue
         for match in KIT_PATH.finditer(line):
@@ -159,15 +167,23 @@ class KitLockTest(unittest.TestCase):
 
 class KitVersionNamesTest(unittest.TestCase):
     def test_patterns(self) -> None:
-        unpublished = [f"{_ZERO}.1.{n}" for n in range(2, 10)]
+        unpublished = [f"{_ZERO}.1.{n}" for n in range(1, 10)]
         unpublished += [f"{_ZERO}.2.{n}" for n in range(10)] + [f"{_ZERO}.1.x", f"{_ZERO}.2.x"]
         for version in unpublished:
             with self.subTest(version=version):
                 self.assertTrue(kit_version_findings(f"papaia-kit {version}"))
                 self.assertTrue(kit_version_findings(f"see vendor/papaia-kit/{version}/"))
+        for commit in ("0ce" + "4127", "14b" + "9c83", "fd6" + "9b66"):
+            for spelling in (commit, commit.upper(), commit + "0" * 33):
+                with self.subTest(commit=spelling):
+                    self.assertTrue(kit_version_findings(f"kit commit {spelling}"))
+                    self.assertTrue(kit_version_findings(f"built from {spelling}"))
         for line in (
             "papaia-kit 0.1.0",
-            "papaia-kit 0.1.1",
+            f"commit = \"{RELEASE_COMMIT}\"",
+            "paperless-mcp-rbac 0.1.1",
+            "qdrant-ingest 0.1.1 and paperless-mcp-rbac 0.1.2",
+            "a" + "0ce" + "4127",
             f"vendor/papaia-kit/{RELEASE_VERSION}/{RELEASE_WHEEL}",
             "papaia-kit 1.2.0",
             "papaia-kit 10.1.1",

@@ -23,6 +23,32 @@ vulnerability database of 2026-11-25); what remains is listed one by one in
   `gosu` and zstd remain.
 - Gotenberg 8.40.0 stays: it is the newest 8.x release and its digest is
   unchanged. Gotenberg 9 is a major step and is not taken here.
+- The document converters send no requests any more. An HTML document sent
+  to Gotenberg's Office route made LibreOffice fetch a style sheet it named,
+  from any address Gotenberg reached (the add-on network, the metadata
+  address, the internet); a webhook or `downloadFrom` named in a request was
+  called as well. Now:
+  - Gotenberg starts with `--chromium-allow-list=^file:///tmp/.*` and
+    `--libreoffice-allow-list=^file:///tmp/.*` (anchored; before: Chromium
+    only, unanchored), `--chromium-deny-private-ips`,
+    `--chromium-deny-public-ips`, `--libreoffice-deny-private-ips`,
+    `--libreoffice-deny-public-ips`, `--webhook-disable` and
+    `--api-disable-download-from` (all `true`); JavaScript stays off. Every
+    flag exists in 8.40.0 (README, "Document converters").
+  - `paperless-gotenberg` and `paperless-tika` each leave
+    `papaia-paperless-net` for their own network with `internal: true`
+    (`<project>-paperless-gotenberg-net`, `<project>-paperless-tika-net`),
+    shared only with `paperless`: no egress, no path to the database,
+    Valkey or the other converter.
+  - Both run as the image's unprivileged user (Gotenberg `1001`, Tika
+    `35002`), with `cap_drop: [ALL]`, `no-new-privileges`, a read-only root
+    file system with a tmpfs `/tmp`, and limits sized from a measured
+    conversion run (Gotenberg `2g` and 512 processes for a peak of 450 MiB
+    and 202; Tika `1536m` and 256 for 308 MiB and 50). Gotenberg reports its
+    health.
+  - Tika sent no request for any test document even next to the probes;
+    its network keeps it that way.
+  `security/exceptions.yaml` is unchanged.
 
 ### Added
 - `PAPERLESS_ALLOWED_HOSTS` (default `paperless`): the host names Paperless
@@ -55,7 +81,19 @@ vulnerability database of 2026-11-25); what remains is listed one by one in
   documents to a depth of 20 and measures the zip-bomb ratio (1000) across
   the whole document. Image user, port and start command are unchanged; Tika
   keeps no data.
-- Ports, networks, volumes, users and capabilities are unchanged.
+- The document converters move to two new internal networks,
+  `<project>-paperless-gotenberg-net` and `<project>-paperless-tika-net`.
+  `docker compose up` (`papaia-ctl addon start paperless`) creates them and
+  reconnects the containers; there is no data step. Nothing else may call
+  Gotenberg or Tika: a service of your own that used them on
+  `papaia-paperless-net` loses that path. Gotenberg ignores webhook headers
+  and `downloadFrom` from now on.
+- Gotenberg and Tika run read-only as their image's unprivileged user with
+  process and memory limits (README, "Document converters"); a host that
+  converts very large documents may need a higher `mem_limit` in an
+  override.
+- Ports, volumes and the other services' users and capabilities are
+  unchanged.
 
 ## [2.1.0] - 2026-11-24
 

@@ -64,6 +64,22 @@ based on merged pull requests; this file mirrors the published releases.
   no entry waives a finding of an own image that has a fix. The image test
   job checks the built contents on both platforms
   (`mediawiki/tests/image_contents.sh`).
+- **Document converters of `paperless` without outbound requests**
+  (`paperless` 2.2.0, unreleased). A document sent to Gotenberg's Office
+  route could make LibreOffice fetch a resource it names, from any address
+  the converter reached. Gotenberg 8.40.0 (image and digest unchanged) now
+  starts with anchored allow lists `^file:///tmp/.*` for Chromium and
+  LibreOffice, private and public addresses denied for both, JavaScript off,
+  and webhook and `downloadFrom` off. Gotenberg and Tika each move from
+  `papaia-paperless-net` to their own `internal: true` network shared only
+  with Paperless (no egress, no path to the database, Valkey or each other),
+  and run as the image's unprivileged user with no capabilities,
+  `no-new-privileges`, a read-only root file system with a tmpfs `/tmp`, and
+  process and memory limits. `tools/test_paperless_gotenberg.py` checks the
+  settings; `tools/test_paperless_conversion_live.py` proves them with probe
+  servers in the add-on network, on a public address and on
+  `169.254.169.254`, and shows that `.docx`, `.xlsx`, `.odt` and `.eml` (HTML
+  body and attachment) still pass through Paperless. `security/exceptions.yaml` is unchanged.
 
 ### Changed
 - **CI tool set on the final papaia-kit 0.1.0**, the kit's first release

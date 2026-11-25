@@ -37,8 +37,6 @@ PAPERLESS_NET_MEMBERS = {
     "paperless-mcp",
     "paperless-broker",
     "paperless-db",
-    "paperless-gotenberg",
-    "paperless-tika",
 }
 
 

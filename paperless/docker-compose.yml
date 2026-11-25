@@ -5,8 +5,10 @@
 # Paperless-ngx document management with OIDC SSO and an OIDC/RBAC-secured
 # MCP server for AI-assisted document access via LibreChat.
 #
-# All services run on the isolated papaia-paperless-net bridge network.
-# papaia-ctl attaches the Nginx Proxy Manager to it (Seam 1); LibreChat joins
+# Paperless, its data services and the MCP server run on the isolated
+# papaia-paperless-net bridge network. The two document converters
+# (Gotenberg, Tika) each sit alone with Paperless in their own internal
+# network, without egress. papaia-ctl attaches the Nginx Proxy Manager to it (Seam 1); LibreChat joins
 # only the front network, where the MCP server is the one member. Paperless
 # listens on the loopback of its container and publishes no port: the only way
 # in is paperless-gate on port 8001, which passes a request only with the
@@ -109,6 +111,10 @@ services:
       - ${CONSUME_DIRECTORY:-./data/consume}:/usr/src/paperless/consume
     networks:
       - papaia-paperless-net
+      # The only member besides each converter: Paperless calls them, nothing
+      # else does (see the converters below).
+      - paperless-gotenberg-net
+      - paperless-tika-net
     labels:
       de.fidonis.module: papaia-paperless
       de.fidonis.role: webserver
@@ -286,7 +292,19 @@ services:
   # ═══════════════════════════════════════════════════════════════════════════
   #  GOTENBERG — Document conversion (Office, email → PDF)
   #
-  #  JavaScript disabled; only file:// URLs allowed to prevent SSRF.
+  #  Reads untrusted documents from uploads and mail, so a document must not
+  #  make it send a request anywhere (README, "Document converters"):
+  #  - start flags (Gotenberg 8.x documentation, each one exists in 8.40.0):
+  #    Chromium and LibreOffice load only the files Gotenberg writes below
+  #    /tmp (anchored allow list), refuse private and public addresses, run no
+  #    JavaScript; webhook and downloadFrom, which Paperless does not use, are
+  #    off;
+  #  - its own internal network, shared only with Paperless: no egress, no
+  #    path to the database, Valkey or Tika, even if a flag failed;
+  #  - the image's unprivileged user `gotenberg` (1001), no capabilities,
+  #    read-only root file system; Chromium, LibreOffice and the request files
+  #    write only to the tmpfs /tmp.
+  #  Limits from a measured run of every conversion Paperless uses (README).
   # ═══════════════════════════════════════════════════════════════════════════
   paperless-gotenberg:
     image: ${PAPERLESS_GOTENBERG_IMAGE:-docker.io/gotenberg/gotenberg:8.40.0@sha256:53073e798c8ef39ea2187e44cb67bab77894ea2509100b94c4fe3b461f7b2996}
@@ -294,21 +312,60 @@ services:
     command:
       - "gotenberg"
       - "--chromium-disable-javascript=true"
-      - "--chromium-allow-list=file:///tmp/.*"
+      - "--chromium-allow-list=^file:///tmp/.*"
+      - "--chromium-deny-private-ips=true"
+      - "--chromium-deny-public-ips=true"
+      - "--libreoffice-allow-list=^file:///tmp/.*"
+      - "--libreoffice-deny-private-ips=true"
+      - "--libreoffice-deny-public-ips=true"
+      - "--webhook-disable=true"
+      - "--api-disable-download-from=true"
+    user: "1001:1001"
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777,size=512m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 512
+    mem_limit: 2g
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     networks:
-      - papaia-paperless-net
+      - paperless-gotenberg-net
     labels:
       de.fidonis.module: papaia-paperless
       de.fidonis.role: document-converter
 
   # ═══════════════════════════════════════════════════════════════════════════
   #  TIKA — Text extraction (Office documents, emails, and other formats)
+  #
+  #  Reads the same untrusted documents. Tika has no switch for outbound
+  #  requests; the live test sends documents that reference outside resources
+  #  and sees none fetched. Its own internal network, shared only with
+  #  Paperless, keeps it that way regardless. The image's unprivileged user
+  #  (35002), no capabilities, read-only root file system with a tmpfs /tmp.
   # ═══════════════════════════════════════════════════════════════════════════
   paperless-tika:
     image: ${PAPERLESS_TIKA_IMAGE:-docker.io/apache/tika:3.4.0.0@sha256:9f3e5bb9da4229a971a4839416b3204499f20668ee834fa741a6a7504bbea7bf}
     restart: unless-stopped
+    user: "35002:35002"
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777,size=256m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 1536m
     networks:
-      - papaia-paperless-net
+      - paperless-tika-net
     labels:
       de.fidonis.module: papaia-paperless
       de.fidonis.role: text-extractor
@@ -325,6 +382,17 @@ networks:
   paperless-front:
     driver: bridge
     name: ${PAPAIA_PROJECT:-papaia}-paperless-front
+  # One network per document converter, shared only with Paperless. Internal:
+  # no route out of the host, and no path to the database, Valkey or the
+  # other converter.
+  paperless-gotenberg-net:
+    driver: bridge
+    internal: true
+    name: ${PAPAIA_PROJECT:-papaia}-paperless-gotenberg-net
+  paperless-tika-net:
+    driver: bridge
+    internal: true
+    name: ${PAPAIA_PROJECT:-papaia}-paperless-tika-net
 
 volumes:
   paperless-data:

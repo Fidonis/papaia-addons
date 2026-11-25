@@ -147,8 +147,10 @@ jobs:
       - name: Seeded findings with a fix must fail, without a fix must pass
         run: |
           set -uo pipefail
-          uv run --locked python tools/scan_gate.py tools/fixtures/scan/seeded-fixable.json >/dev/null 2>&1
-          status=$?
+          # The runner starts this step with bash -e; capture the expected
+          # non-zero exit instead of letting it end the step.
+          status=0
+          uv run --locked python tools/scan_gate.py tools/fixtures/scan/seeded-fixable.json >/dev/null 2>&1 || status=$?
           if [[ $status -ne 1 ]]; then echo "::error::scan gate passed seeded findings with a fix (exit $status)"; exit 1; fi
           if ! uv run --locked python tools/scan_gate.py tools/fixtures/scan/seeded-no-fix.json --no-fix "$RUNNER_TEMP/no-fix.txt"; then
             echo "::error::scan gate failed on seeded findings without a fix"; exit 1

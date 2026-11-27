@@ -408,6 +408,13 @@ MW_SERVICE_LOGIN=PapaiaService@service
 MW_SERVICE_PASSWORD=GENERATE_SECRET   # generated on install
 ```
 
+The password needs at least 32 characters from `0-9` and `a-w`, such as the
+generated value or `openssl rand -hex 32`: MediaWiki does not try any other
+bot password at sign-in, so the entrypoint refuses to start with one. The
+`<user>` is a name of its own, which the entrypoint creates. It refuses the
+break-glass admin and any existing account with a password or a Keycloak
+login, which would otherwise end up in every tier.
+
 The manifest lists both under `exports`, so an add-on that requires
 `mediawiki` takes them with `default_from_addon: "mediawiki:MW_SERVICE_LOGIN"`
 (papaia with `addon_api: 4`). It signs in with `action=login` and these two
@@ -422,19 +429,21 @@ On every start the entrypoint:
   `uploadeditmovefile` and `delete`. The grants bound what the session can
   do, whatever the groups allow: no moves, no protection, no user rights.
   An unchanged value leaves the bot password alone; a changed one replaces
-  it, and the old one stops working.
+  it, and the old one stops working;
+- removes every other bot password, so this is the only one. After a change
+  of `MW_SERVICE_LOGIN`, the former login stops working with the next start.
+  The former account keeps its groups but has no way to sign in; take them
+  away in `Special:UserRights` if you like.
 
-An empty `MW_SERVICE_PASSWORD` removes the bot password; the account stays,
-without a way to sign in. After a rotation, reinstall the add-ons that read
-the value, since their bundle values are sticky.
+An empty `MW_SERVICE_PASSWORD` removes the bot password as well; the account
+stays, without a way to sign in. After a rotation, reinstall the add-ons that
+read the value, since their bundle values are sticky.
 
 Edits carry the bot flag and show the service account as author, so they stay
 out of recent changes by default. Bot passwords are otherwise off:
 `Special:BotPasswords` is removed for everyone, the break-glass admin
 included, so no one can create another one, and people and their API clients
 keep signing in through Keycloak and OAuth.
-
----
 
 ---
 
@@ -460,7 +469,7 @@ step 2.
 | `MW_SECRET_KEY`, `MW_UPGRADE_KEY` | Random values |
 | `MW_DB_PASSWORD` | Random value |
 | `MW_ADMIN_PASSWORD` | Break-glass admin password |
-| `MW_SERVICE_PASSWORD` | Service account bot password, at least 32 characters; empty = no service access |
+| `MW_SERVICE_PASSWORD` | Service account bot password, at least 32 characters from `0-9` and `a-w` (e.g. `openssl rand -hex 32`); empty = no service access |
 | `KC_MEDIAWIKI_CLIENT_SECRET` | Secret of the `mediawiki` Keycloak client |
 | `MEDIAWIKI_MCP_SIGNING_KEY` | Random value, at least 32 characters |
 | `MEDIAWIKI_MCP_ALLOWED_REDIRECTS` | OAuth callbacks of the MCP clients, e.g. LibreChat's |
@@ -625,8 +634,11 @@ positive controls. `tests/service_check.py` then signs in as the
 [service account](#service-account), creates, edits and deletes a tier page
 with the bot flag, is refused moving and protecting, and finds
 `Special:BotPasswords` gone; after a rotation of `MW_SERVICE_PASSWORD` the
-former password is refused, and an unchanged one survives a restart.
-Everything is removed afterwards.
+former password is refused, and an unchanged one survives a restart. The
+entrypoint's script refuses a password outside `0-9` and `a-w`, an existing
+account with a password and the admin under another spelling; after a change
+of `MW_SERVICE_LOGIN` the former login is refused, and an empty
+`MW_SERVICE_PASSWORD` leaves no way in. Everything is removed afterwards.
 
 The `mediawiki-image` workflow runs it on every change to the add-on, before
 an image is published. Run it after changing the tier hooks in

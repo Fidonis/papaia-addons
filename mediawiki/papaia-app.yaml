@@ -146,13 +146,15 @@ env_prompts:
   # ── Wiki — service account ───────────────────────────────────────────────
   MW_SERVICE_LOGIN:
     label: "Service account login"
-    hint: "<user>@<app> other add-ons sign in with over the API"
+    hint: "<user>@<app> other add-ons sign in with over the API; <user> is a name of its own, created on start"
     type: text
-    pattern: "^[^@:/|#<>\\[\\]{}]+@[A-Za-z0-9_.-]+$"
+    pattern: "^[^@:=/|#<>\\[\\]{}]+@[A-Za-z0-9_.-]{1,32}$"
 
   MW_SERVICE_PASSWORD:
     label: "Service account bot password"
-    hint: "Auto-generated; re-applied on every start, empty = no service access"
+    hint: "Auto-generated; at least 32 characters from 0-9 and a-w, re-applied on every start, empty = no service access"
+    type: text
+    pattern: "^([0-9a-w]{32,})?$"
     secret: true
 
   MW_ENABLE_LOCAL_LOGIN:

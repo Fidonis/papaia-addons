@@ -5,8 +5,9 @@ Runs against a wiki started by run.sh. The service account signs in with
 `action=login` and its bot password, creates, edits and deletes a page in the
 Management tier, and its edits carry the bot flag. Its grants keep it from
 moving or protecting pages. Special:BotPasswords is gone for everyone, the
-break-glass admin included. With --rejected-password, a password
-the wiki must no longer accept (the one before a rotation) is tried as well.
+break-glass admin included. Each --rejected LOGIN PASSWORD is a sign-in the
+wiki must no longer accept (the password before a rotation, a former
+MW_SERVICE_LOGIN). With an empty --password, only those are tried.
 
 Standard library only. Exit status 0 when every check passes.
 """
@@ -27,27 +28,37 @@ def bot_login(base: str, login: str, password: str) -> tuple[Client, dict]:
     return client, data.get("login", {})
 
 
+def finish(checks: Checks) -> int:
+    print(f"\n{checks.count - len(checks.failures)}/{checks.count} checks passed")
+    if checks.failures:
+        print("Failed: " + "; ".join(checks.failures))
+        return 1
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--base", required=True, help="wiki URL, e.g. https://127.0.0.1:18020")
     ap.add_argument("--login", required=True, help="MW_SERVICE_LOGIN")
-    ap.add_argument("--password", required=True, help="MW_SERVICE_PASSWORD")
+    ap.add_argument("--password", required=True, help="MW_SERVICE_PASSWORD; empty: only --rejected is tried")
     ap.add_argument("--admin", default="Admin")
     ap.add_argument("--admin-password", required=True)
-    ap.add_argument("--rejected-password", help="a former MW_SERVICE_PASSWORD")
+    ap.add_argument("--rejected", nargs=2, action="append", default=[], metavar=("LOGIN", "PASSWORD"),
+                    help="a sign-in that must be refused; repeatable")
     args = ap.parse_args()
     checks = Checks()
     print("service account")
 
-    if args.rejected_password:
-        _, result = bot_login(args.base, args.login, args.rejected_password)
-        checks.ok("the former password is refused", result.get("result") == "Failed", f"({result})")
+    for login, password in args.rejected:
+        _, result = bot_login(args.base, login, password)
+        checks.ok(f"{login} with a former password is refused", result.get("result") == "Failed", f"({result})")
+    if not args.password:
+        return finish(checks)
 
     svc, result = bot_login(args.base, args.login, args.password)
     checks.ok("signs in with the bot password", result.get("result") == "Success", f"({result})")
     if result.get("result") != "Success":
-        print(f"\n{checks.count - len(checks.failures)}/{checks.count} checks passed")
-        return 1
+        return finish(checks)
 
     title = f"{TIER}:Service check {secrets.token_hex(4)}"
     marker = secrets.token_hex(8)
@@ -86,11 +97,7 @@ def main() -> int:
         checks.ok(f"{path} does not exist, even for the admin",
                   status == 404 and "wpappId" not in body, f"(HTTP {status})")
 
-    print(f"\n{checks.count - len(checks.failures)}/{checks.count} checks passed")
-    if checks.failures:
-        print("Failed: " + "; ".join(checks.failures))
-        return 1
-    return 0
+    return finish(checks)
 
 
 if __name__ == "__main__":

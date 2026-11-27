@@ -173,20 +173,19 @@ The wiki container brings itself into a usable state before Apache starts
 
 ## Keycloak
 
-Import one client into the `papaia` realm — it is for the **wiki login**
-only:
+The wiki login uses one client in the `papaia` realm,
+`integration/infra/keycloak/mediawiki.json`. The MCP server needs none.
 
-| File | Where |
-|---|---|
-| `integration/infra/keycloak/mediawiki.json` | Clients → Import client |
+**Cores serving `addon_api` 4:** nothing to do. `addon install` generates
+`KC_MEDIAWIKI_CLIENT_SECRET`, and `papaia-ctl addon start mediawiki` (as well
+as every `papaia-ctl start`) creates the client from the export, with that
+secret and `MW_SERVER` as its root URL. A secret changed in the `.env` is set
+on the client on the next start.
 
-After the import:
-
-- **Root URL of `mediawiki`:** set it to `MW_SERVER`. The redirect URIs are
-  relative to it (`/index.php/Special:PluggableAuthLogin`); the imported value
-  is the default `https://host.docker.internal:8020`.
-- **Secret:** copy the client secret (Credentials tab) into
-  `KC_MEDIAWIKI_CLIENT_SECRET`.
+**Older cores:** import the client by hand (Clients → Import client), set its
+root URL to `MW_SERVER` (the redirect URIs are relative to it, the imported
+value is `https://host.docker.internal:8020`), then copy its secret
+(Credentials tab) over the generated `KC_MEDIAWIKI_CLIENT_SECRET`.
 
 The `groups` protocol mapper on the client puts the user's realm roles into
 the `groups` claim, the same shape as the paperless add-on. The MCP server
@@ -475,7 +474,7 @@ step 2.
 | Variable | Description |
 |---|---|
 | `OIDC_ISSUER` | Keycloak issuer URL, browser-facing (same value as the core `OIDC_ISSUER`) |
-| `PAPAIA_CONFIG_DIR` | papaia config directory; its `certs/local-ca.crt` is trusted for the OIDC calls, and `certs/local-ca.key` issues the certificate of the https port (since papaia 1.9.0 trusted for `host.docker.internal`, `localhost` and IP addresses only) |
+| `PAPAIA_CONFIG_DIR` | papaia config directory; its `certs/local-ca.crt` is trusted for the OIDC calls and by the MCP server, and `certs/local-ca.key` issues the certificate of the https port (since papaia 1.9.0 trusted for `host.docker.internal`, `localhost` and IP addresses only) |
 | `MW_SERVER` | URL of the wiki that the browser and LibreChat both reach over https, see [Before you start](#before-you-start-one-url-for-the-browser-and-librechat) |
 | `MW_SECRET_KEY`, `MW_UPGRADE_KEY` | Random values |
 | `MW_DB_PASSWORD` | Random value |
@@ -486,8 +485,8 @@ step 2.
 | `MEDIAWIKI_MCP_ALLOWED_REDIRECTS` | OAuth callbacks of the MCP clients, e.g. LibreChat's |
 
 With an external identity provider whose certificate is publicly trusted, set
-`MW_OIDC_CA_FILE` to an empty value in a compose override, so the system CA
-bundle is used.
+`MW_OIDC_CA_FILE` of the wiki and `NODE_EXTRA_CA_CERTS` of the MCP server to
+an empty value in a compose override, so the system CA bundle is used.
 
 ### 2. Register Keycloak clients
 
@@ -544,7 +543,9 @@ A local CA created by papaia 1.9.0 or later signs for `host.docker.internal`,
 browsers and LibreChat reject the certificate with a permitted subtree
 violation, so a real host name always goes through the proxy. Production use
 with users outside that trust belongs behind the proxy; the host port can
-then be bound to `127.0.0.1` (`HOST_IP`) or left unused.
+then be bound to `127.0.0.1` (`HOST_IP`) or left unused. The MCP server,
+which downloads files from `MW_SERVER`, trusts the papaia local CA and the
+public CAs, but not a self-signed certificate.
 
 ---
 
@@ -740,3 +741,10 @@ before connecting; see [After a reinstall](#after-a-reinstall).
   users who can read every tier.
 - **Search** uses MediaWiki's built-in MariaDB full-text search. Tier members
   tick the tier namespace under *Advanced search* once to include it.
+- **`get-file-data`**, the MCP tool that hands a file's image to the model,
+  fails with HTTP 403. It downloads the file from the URL the wiki reports,
+  which points at `img_auth.php` on `MW_SERVER`. `img_auth.php` serves files
+  to browser sessions only: MediaWiki accepts the MCP server's OAuth sign-in
+  on its API alone, and the MCP server sends its token only to the wiki's
+  internal address, `http://mediawiki`. `get-file`, which returns a file's
+  details and download URL, and the page tools are not affected.

@@ -214,6 +214,21 @@ def check_manifest(path: Path, manifest: dict[str, Any]) -> list[str]:
         if not (path / relative).is_file():
             problems.append(f"{MANIFEST}: integration path `{relative}` does not exist")
 
+    keycloak = (manifest.get("integration") or {}).get("keycloak")
+    secrets = keycloak.get("client_secrets") if isinstance(keycloak, dict) else None
+    clients = keycloak.get("clients") if isinstance(keycloak, dict) else None
+    for client, spec in secrets.items() if isinstance(secrets, dict) else []:
+        where = f"{MANIFEST}: integration.keycloak.client_secrets.{client}"
+        if not isinstance(clients, list) or client not in clients:
+            problems.append(f"{where} is not listed under integration.keycloak.clients")
+        if not isinstance(spec, dict) or not isinstance(spec.get("secret_env"), str):
+            problems.append(f"{where} needs a secret_env")
+            continue
+        for field in ("secret_env", "root_url_env"):
+            var = spec.get(field)
+            if isinstance(var, str) and var not in documented:
+                problems.append(f"{where}.{field} `{var}` is not in {ENV_EXAMPLE}")
+
     compose_text = (path / COMPOSE).read_text(encoding="utf-8")
     networks = manifest.get("networks")
     network = networks.get("app_network") if isinstance(networks, dict) else None

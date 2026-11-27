@@ -464,7 +464,7 @@ step 2.
 | Variable | Description |
 |---|---|
 | `OIDC_ISSUER` | Keycloak issuer URL, browser-facing (same value as the core `OIDC_ISSUER`) |
-| `PAPAIA_CONFIG_DIR` | papaia config directory; its `certs/local-ca.crt` is trusted for the OIDC calls, and `certs/local-ca.key` issues the certificate of the https port |
+| `PAPAIA_CONFIG_DIR` | papaia config directory; its `certs/local-ca.crt` is trusted for the OIDC calls and by the MCP server, and `certs/local-ca.key` issues the certificate of the https port |
 | `MW_SERVER` | URL of the wiki that the browser and LibreChat both reach over https, see [Before you start](#before-you-start-one-url-for-the-browser-and-librechat) |
 | `MW_SECRET_KEY`, `MW_UPGRADE_KEY` | Random values |
 | `MW_DB_PASSWORD` | Random value |
@@ -475,8 +475,8 @@ step 2.
 | `MEDIAWIKI_MCP_ALLOWED_REDIRECTS` | OAuth callbacks of the MCP clients, e.g. LibreChat's |
 
 With an external identity provider whose certificate is publicly trusted, set
-`MW_OIDC_CA_FILE` to an empty value in a compose override, so the system CA
-bundle is used.
+`MW_OIDC_CA_FILE` of the wiki and `NODE_EXTRA_CA_CERTS` of the MCP server to
+an empty value in a compose override, so the system CA bundle is used.
 
 ### 2. Register Keycloak clients
 
@@ -529,7 +529,9 @@ with `client_max_body_size` raised for uploads and response buffering off for
 The wiki's own host port speaks https with a certificate from the papaia
 local CA (or a self-signed one), which suits a single host and internal use.
 Production use with users outside that trust belongs behind the proxy; the
-host port can then be bound to `127.0.0.1` (`HOST_IP`) or left unused.
+host port can then be bound to `127.0.0.1` (`HOST_IP`) or left unused. The
+MCP server, which downloads files from `MW_SERVER`, trusts the papaia local CA
+and the public CAs, but not a self-signed certificate.
 
 ---
 
@@ -725,3 +727,10 @@ before connecting; see [After a reinstall](#after-a-reinstall).
   users who can read every tier.
 - **Search** uses MediaWiki's built-in MariaDB full-text search. Tier members
   tick the tier namespace under *Advanced search* once to include it.
+- **`get-file-data`**, the MCP tool that hands a file's image to the model,
+  fails with HTTP 403. It downloads the file from the URL the wiki reports,
+  which points at `img_auth.php` on `MW_SERVER`. `img_auth.php` serves files
+  to browser sessions only: MediaWiki accepts the MCP server's OAuth sign-in
+  on its API alone, and the MCP server sends its token only to the wiki's
+  internal address, `http://mediawiki`. `get-file`, which returns a file's
+  details and download URL, and the page tools are not affected.

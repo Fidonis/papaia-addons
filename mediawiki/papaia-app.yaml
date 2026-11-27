@@ -56,6 +56,7 @@ networks:
 # bundle instead of failing on the absent local-ca.crt.
 local_ca_env:
   mediawiki: [MW_OIDC_CA_FILE]
+  mediawiki-mcp: [NODE_EXTRA_CA_CERTS]
 
 # Per-variable metadata: label (human-readable prompt text), hint (secondary
 # explanation), default (overrides .env.example value), default_from_core
@@ -140,6 +141,20 @@ env_prompts:
   MW_ADMIN_PASSWORD:
     label: "Break-glass admin password"
     hint: "Auto-generated; re-applied on every start"
+    secret: true
+
+  # ── Wiki — service account ───────────────────────────────────────────────
+  MW_SERVICE_LOGIN:
+    label: "Service account login"
+    hint: "<user>@<app> other add-ons sign in with over the API; <user> is a name of its own, created on start"
+    type: text
+    pattern: "^[^@:=/|#<>\\[\\]{}]+@[A-Za-z0-9_.-]{1,32}$"
+
+  MW_SERVICE_PASSWORD:
+    label: "Service account bot password"
+    hint: "Auto-generated; at least 32 characters from 0-9 and a-w, re-applied on every start, empty = no service access"
+    type: text
+    pattern: "^([0-9a-w]{32,})?$"
     secret: true
 
   MW_ENABLE_LOCAL_LOGIN:
@@ -269,6 +284,11 @@ env_prompts:
     label: "MCP log level"
     hint: "One of: debug, info, warning, error"
     type: text
+
+# Values add-ons that require mediawiki may read (default_from_addon), with
+# cores serving addon_api 4. Older cores ignore the key; the account works
+# without it.
+exports: [MW_SERVICE_LOGIN, MW_SERVICE_PASSWORD]
 
 env_replace_secrets:
   KC_MEDIAWIKI_CLIENT_SECRET:

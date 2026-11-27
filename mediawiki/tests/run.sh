@@ -6,7 +6,7 @@
 # Starts the wiki and its database from the add-on's own docker-compose.yml
 # under a throw-away project, with local login on and a placeholder identity
 # provider, plus a Mailpit mail catcher as the wiki's relay, seeds three users
-# and runs tier_check.py against it. Everything
+# and runs tier_check.py and service_check.py against it. Everything
 # is removed afterwards, volumes included, unless --keep is given.
 #
 #   tests/run.sh [--port=18020] [--keep]
@@ -34,6 +34,8 @@ work="$(mktemp -d)"
 mkdir -p "$work/config/certs"
 password="$(openssl rand -hex 12)"
 admin_password="$(openssl rand -hex 12)"
+service_login="Service@check"
+service_password="$(openssl rand -hex 32)"
 
 cat > "$work/.env" <<EOF
 PAPAIA_PROJECT=$project
@@ -47,6 +49,8 @@ MW_SECRET_KEY=$(openssl rand -hex 32)
 MW_UPGRADE_KEY=$(openssl rand -hex 8)
 MW_DB_PASSWORD=$(openssl rand -hex 12)
 MW_ADMIN_PASSWORD=$admin_password
+MW_SERVICE_LOGIN=$service_login
+MW_SERVICE_PASSWORD=$service_password
 MW_ENABLE_LOCAL_LOGIN=true
 MW_AUTO_LOGIN=false
 MW_SMTP_HOST=$project-mailpit:1025
@@ -91,3 +95,70 @@ done
 
 python3 "$addon_dir/tests/tier_check.py" --base "https://127.0.0.1:$port" \
     --password "$password" --admin-password "$admin_password" --mail-api "$mail_api"
+
+python3 "$addon_dir/tests/service_check.py" --base "https://127.0.0.1:$port" \
+    --login "$service_login" --password "$service_password" --admin-password "$admin_password"
+
+# A rotated password takes effect with the next start, and the old one stops
+# working.
+echo "rotating the service password"
+former_password="$service_password"
+service_password="$(openssl rand -hex 32)"
+sed -i.bak "s/^MW_SERVICE_PASSWORD=.*/MW_SERVICE_PASSWORD=$service_password/" "$work/.env"
+compose up -d --wait mediawiki
+python3 "$addon_dir/tests/service_check.py" --base "https://127.0.0.1:$port" \
+    --login "$service_login" --password "$service_password" --admin-password "$admin_password" \
+    --rejected "$service_login" "$former_password"
+
+# An unchanged password survives a restart: the bot password is left alone.
+compose restart mediawiki >/dev/null
+kept=false
+for _ in $(seq 1 60); do
+    # Not grep -q: with pipefail, compose logs would fail on the closed pipe.
+    if compose logs mediawiki 2>/dev/null | grep "bot password of ${service_login%@*} is current" >/dev/null; then
+        kept=true
+        break
+    fi
+    sleep 2
+done
+[[ "$kept" == true ]] || { echo "FAIL  the bot password was rewritten on a restart without a change"; exit 1; }
+echo "  ok    an unchanged bot password is kept on a restart"
+
+# The script stops, before it changes anything, on a password action=login
+# would ignore, on an existing account with a password and on the admin under
+# another spelling.
+compose up -d --wait mediawiki >/dev/null
+refused() {  # <what> <password> <user> <expected message>
+    local out
+    if out="$(mw env MW_INSTALL_PATH=/var/www/html MW_SERVICE_PASSWORD="$2" \
+        php /usr/local/share/papaia-mediawiki/EnsureServiceAccount.php --user="$3" --appid=check \
+        --admin=Admin --groups=bot --grants=basic 2>&1)"; then
+        echo "FAIL  $1 was accepted"
+        exit 1
+    fi
+    [[ "$out" == *"$4"* ]] || { echo "FAIL  $1 failed for another reason: $out"; exit 1; }
+    echo "  ok    $1 is refused"
+}
+refused "a password outside 0-9 and a-w" "$(openssl rand -hex 20 | tr 'a-f' 'A-F')" "${service_login%@*}" \
+    "from 0-9 and a-w"
+refused "an existing account with a password" "$service_password" Member "which has a password"
+refused "the admin spelled in lower case" "$service_password" admin "must not name the admin account"
+
+# There is only ever one bot password: a changed login leaves the former one
+# without a way in.
+echo "changing the service login"
+former_login="$service_login"
+service_login="Service@renamed"
+sed -i.bak "s/^MW_SERVICE_LOGIN=.*/MW_SERVICE_LOGIN=$service_login/" "$work/.env"
+compose up -d --wait mediawiki
+python3 "$addon_dir/tests/service_check.py" --base "https://127.0.0.1:$port" \
+    --login "$service_login" --password "$service_password" --admin-password "$admin_password" \
+    --rejected "$former_login" "$service_password"
+
+# An empty password removes that one as well.
+echo "removing the service password"
+sed -i.bak "s/^MW_SERVICE_PASSWORD=.*/MW_SERVICE_PASSWORD=/" "$work/.env"
+compose up -d --wait mediawiki
+python3 "$addon_dir/tests/service_check.py" --base "https://127.0.0.1:$port" \
+    --login "$service_login" --password "" --admin-password "$admin_password" \
+    --rejected "$service_login" "$service_password" --rejected "$former_login" "$service_password"

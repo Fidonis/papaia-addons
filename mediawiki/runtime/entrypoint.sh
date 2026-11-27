@@ -201,16 +201,17 @@ MW_ENABLE_LOCAL_LOGIN=true php maintenance/run.php createAndPromote --force --sy
 # Other add-ons sign in as <user>@<app> (MW_SERVICE_LOGIN) with the bot
 # password MW_SERVICE_PASSWORD. The account has no main password, so the bot
 # password, with its grants, is the only way in. The bot password is
-# rewritten only when the .env value or the grants changed; an empty
-# MW_SERVICE_PASSWORD removes it.
+# rewritten only when the .env value or the grants changed; every other bot
+# password is removed, and an empty MW_SERVICE_PASSWORD removes this one too.
+# The script refuses the admin and any existing account with a password or a
+# Keycloak login, comparing names the way MediaWiki does.
 MW_SERVICE_LOGIN="${MW_SERVICE_LOGIN:-PapaiaService@service}"
 service_user="${MW_SERVICE_LOGIN%@*}"
 service_app="${MW_SERVICE_LOGIN##*@}"
 [[ -n "$service_user" && -n "$service_app" && "$MW_SERVICE_LOGIN" == *@* ]] \
     || die "MW_SERVICE_LOGIN must be <user>@<app>"
-[[ "$service_user" != "$MW_ADMIN_USER" ]] || die "MW_SERVICE_LOGIN must not name the admin account"
 php "$RUNTIME_DIR/EnsureServiceAccount.php" --user="$service_user" --appid="$service_app" \
-    --groups="bot,sysop,$ALL_TIERS_GROUP" --grants="$SERVICE_GRANTS" >&2
+    --admin="$MW_ADMIN_USER" --groups="bot,sysop,$ALL_TIERS_GROUP" --grants="$SERVICE_GRANTS" >&2
 
 # ── 5. OAuth ──────────────────────────────────────────────────────────────
 # The key pair signs the OAuth 2.0 access tokens. It is created once and

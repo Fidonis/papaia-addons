@@ -242,6 +242,9 @@ docker compose -f addons/paperless/docker-compose.yml down -v
 
 ## Known limitations
 
+- **Mutually exclusive with the `paperless-connect` add-on.** Both register the same Keycloak
+  client (`mcp-paperless`), the same LibreChat MCP entry and the same `paperless-mcp` service
+  name. Run one or the other, not both.
 - **`mcpSettings.allowedDomains`** must be updated manually (or via overlay) when adding
   this addon alongside other MCP addons. The papaia config render merges dict keys
   but replaces lists wholesale; a fix is tracked in the papaia repository.

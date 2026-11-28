@@ -1,5 +1,5 @@
 name: qdrant
-version: 2.0.0
+version: 2.1.0
 addon_repo: papaia-addon-qdrant
 requires:
   # Contract generation this addon is built against; checked against the

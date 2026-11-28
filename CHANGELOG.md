@@ -10,6 +10,60 @@ based on merged pull requests; this file mirrors the published releases.
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-11-28
+
+### Added
+- **mediawiki service account** (`MW_SERVICE_LOGIN`, `MW_SERVICE_PASSWORD`):
+  one wiki account that other add-ons use over the API, kept by the entrypoint
+  on every start and exported to add-ons that require `mediawiki` (add-on API 4,
+  papaia ≥ 1.9.0).
+- **mediawiki Keycloak client created by the core**: the manifest names the
+  client under `integration.keycloak.client_secrets`, so a core serving add-on
+  API 4 sets it up on `addon start` and `start`, and
+  `KC_MEDIAWIKI_CLIENT_SECRET` is generated on install. Older cores keep the
+  manual import.
+- **Knowledge sources** for the core's knowledge-map profile (`knowledge:`,
+  add-on API 6, papaia ≥ 1.9.0): `mediawiki.wiki`, `paperless.docs` (in
+  `paperless` and `paperless-connect`) and `qdrant.search` (in `qdrant` and
+  `qdrant-connect`). The manifests declare `requires.addon_api: [2, 6]`, so
+  they stay installable on papaia ≥ 1.3.0, which ignores the key.
+- **Per-add-on changelogs** (`<addon>/CHANGELOG.md`) and further manifest
+  checks in `tools/components.py`: `name`, `env_prompts`, `integration` paths,
+  `networks.app_network`, the variables Compose substitutes, `client_secrets`
+  and a changelog section for each version. `release-check` also fails when a
+  version moved without a changelog section. `AGENTS.md` documents the
+  manifest fields of add-on API 4 and 6 and `install_notes`.
+
+### Changed
+- MediaWiki MCP Server 0.19.0 → 0.21.0. The wiki image is published as
+  `1.43.11-1.1.0`, with the same content as `1.43.11-1.0.0`.
+- The READMEs of `paperless`/`paperless-connect` state that the two add-ons are
+  mutually exclusive, like `qdrant`/`qdrant-connect` already did.
+- `AGENTS.md`: `requires.addons` needs papaia ≥ 1.9.0, the first core serving
+  add-on API 4 (it said 1.8.0).
+
+### Fixed
+- **mediawiki:** the MCP server trusts the papaia local CA and resolves
+  `host.docker.internal` on Linux hosts, so `get-file-data` gets past the
+  certificate of the wiki's https port. The download itself still ends in
+  HTTP 403 (README, "Known limitations").
+- **mediawiki:** a certificate of the https port that fails verification only
+  on the name constraints of a local CA from papaia ≥ 1.9.0 is kept instead of
+  being reissued on every start; the entrypoint warns and names the host names
+  that CA signs for.
+
+### Add-on versions
+
+| Add-on | Version | Components |
+|---|---|---|
+| mediawiki | 1.0.0 → 1.1.0 | MediaWiki 1.43.11-1.0.0 → 1.43.11-1.1.0; MediaWiki MCP Server 0.19.0 → 0.21.0; MariaDB 11.8.9 |
+| n8n | 1.0.0 | n8n 2.36.6; oauth2-proxy v7.15.3; nginx 1.31-alpine; PostgreSQL 18 |
+| paperless | 2.0.0 → 2.1.0 | Paperless-ngx 3.0.5; paperless-mcp-rbac 0.1.1; Valkey 9-alpine; PostgreSQL 18; Gotenberg 8.34; Apache Tika 3.2.3.0 |
+| paperless-connect | 2.0.0 → 2.1.0 | paperless-mcp-rbac 0.1.1 |
+| qdrant | 2.0.0 → 2.1.0 | Qdrant v1.19.0; qdrant-mcp-rbac 0.3.0 |
+| qdrant-connect | 2.0.0 → 2.1.0 | qdrant-mcp-rbac 0.3.0 |
+| qdrant-ingest | 2.0.0 | qdrant-ingest 0.3.0; Apache Tika 3.2.3.0 |
+
 ## [1.2.0] - 2026-10-24
 
 ### Added

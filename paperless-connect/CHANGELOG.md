@@ -5,12 +5,25 @@ file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.
 and the versions are the add-on's own `version` in `papaia-app.yaml`. Steps an
 operator has to do by hand are listed under `### Upgrade notes`.
 
+## [2.1.0] - 2026-11-28
+
+### Added
+- A knowledge source `paperless.docs` for the core's knowledge-map profile
+  (add-on API 6, papaia 1.9.0 or newer). Older cores ignore it.
+  It is the same source the `paperless` add-on declares, so the map no
+  longer lists the `Paperless` MCP server as undeclared.
+- `PAPERLESS_MCP_HOST` is documented in `.env.example`.
+
+### Changed
+- The README states that `paperless-connect` and `paperless` are mutually
+  exclusive. Installed together, the knowledge-map render stops on the
+  duplicate source id.
+
 ## [2.0.0] - 2026-10-24
 
 ### Added
 - `components` in the manifest, naming the software the add-on bundles
   (paperless-mcp-rbac 0.1.1).
-- `PAPERLESS_MCP_HOST` is documented in `.env.example`.
 
 ### Changed
 - **Breaking:** the Docker bridge is scoped to the deployment,

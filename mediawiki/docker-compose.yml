@@ -41,7 +41,7 @@ services:
   mediawiki:
     # <MediaWiki version>-<add-on version>: a new add-on version that changes
     # image/ publishes a new tag, so a cached image is never mistaken for it.
-    image: ${MEDIAWIKI_IMAGE:-ghcr.io/fidonis/papaia-mediawiki:1.43.11-1.0.0}
+    image: ${MEDIAWIKI_IMAGE:-ghcr.io/fidonis/papaia-mediawiki:1.43.11-1.1.0}
     # Used when the image cannot be pulled: compose builds it from the
     # add-on's own Dockerfile instead (needs internet, takes minutes).
     build:

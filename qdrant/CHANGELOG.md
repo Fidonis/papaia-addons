@@ -5,12 +5,18 @@ format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the versions are the add-on's own `version` in `papaia-app.yaml`. Steps an
 operator has to do by hand are listed under `### Upgrade notes`.
 
+## [2.1.0] - 2026-11-28
+
+### Added
+- A knowledge source `qdrant.search` for the core's knowledge-map profile
+  (add-on API 6, papaia 1.9.0 or newer). Older cores ignore it.
+- `QDRANT_MCP_HOST` is documented in `.env.example`.
+
 ## [2.0.0] - 2026-10-24
 
 ### Added
 - `components` in the manifest, naming the software the add-on bundles
   (Qdrant v1.19.0, qdrant-mcp-rbac 0.3.0).
-- `QDRANT_MCP_HOST` is documented in `.env.example`.
 
 ### Changed
 - **Breaking:** the Docker bridge is scoped to the deployment,

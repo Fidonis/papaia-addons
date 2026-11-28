@@ -41,7 +41,7 @@ services:
   mediawiki:
     # <MediaWiki version>-<add-on version>: a new add-on version that changes
     # image/ publishes a new tag, so a cached image is never mistaken for it.
-    image: ${MEDIAWIKI_IMAGE:-ghcr.io/fidonis/papaia-mediawiki:1.43.11-1.0.0}
+    image: ${MEDIAWIKI_IMAGE:-ghcr.io/fidonis/papaia-mediawiki:1.43.11-1.1.0}
     # Used when the image cannot be pulled: compose builds it from the
     # add-on's own Dockerfile instead (needs internet, takes minutes).
     build:
@@ -63,6 +63,9 @@ services:
       MW_DB_PASSWORD:             ${MW_DB_PASSWORD}
       MW_ADMIN_USER:              ${MW_ADMIN_USER:-Admin}
       MW_ADMIN_PASSWORD:          ${MW_ADMIN_PASSWORD}
+      # Service account for other add-ons — README, "Service account".
+      MW_SERVICE_LOGIN:           ${MW_SERVICE_LOGIN:-PapaiaService@service}
+      MW_SERVICE_PASSWORD:        ${MW_SERVICE_PASSWORD:-}
       MW_ENABLE_LOCAL_LOGIN:      ${MW_ENABLE_LOCAL_LOGIN:-false}
       MW_AUTO_LOGIN:              ${MW_AUTO_LOGIN:-true}
       MW_LOGIN_BUTTON_LABEL:      ${MW_LOGIN_BUTTON_LABEL:-Log in with Keycloak}
@@ -186,10 +189,21 @@ services:
       MCP_TRUSTED_HOSTS:           mediawiki
       MCP_LOG_LEVEL:               ${MEDIAWIKI_MCP_LOG_LEVEL:-info}
       CONFIG:                      /papaia/config.json
+      # get-file-data downloads the file from the URL the wiki's imageinfo
+      # returns, which is built from MW_SERVER -- by default the wiki's own
+      # https port with a certificate from the papaia local CA. Node adds this
+      # CA to its trust store; cleared to "" via overrides/addons/ when
+      # auth_provider=external_oidc, like MW_OIDC_CA_FILE.
+      NODE_EXTRA_CA_CERTS:         /certs/local-ca.crt
+    # MW_SERVER defaults to host.docker.internal, which Linux hosts only
+    # resolve through this mapping.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       mediawiki:
         condition: service_healthy
     volumes:
+      - ${PAPAIA_CONFIG_DIR}/certs:/certs:ro
       - ./mcp/config.json:/papaia/config.json:ro
       - ./mcp/mcp-start.sh:/papaia/mcp-start.sh:ro
       - mediawiki-mcp-credentials:/papaia/credentials:ro

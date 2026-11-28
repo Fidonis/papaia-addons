@@ -10,6 +10,8 @@
 #   3. empty database -> install.php (schema + local admin)
 #      otherwise, once per container -> update.php (schema after an upgrade)
 #   4. local admin: groups, password from MW_ADMIN_PASSWORD
+#   4b. service account for other add-ons: groups, bot password from
+#      MW_SERVICE_PASSWORD
 #   5. OAuth: token signing keys + the MCP server's consumer, whose
 #      credentials go to the volume the MCP container reads
 #
@@ -17,7 +19,7 @@
 # and a restart re-applies a rotated secret.
 #
 # Mounted read-only from the add-on's runtime/ directory together with
-# LocalSettings.php and EnsureOAuthConsumer.php, so an add-on update reaches
+# LocalSettings.php and the PHP bootstrap scripts, so an add-on update reaches
 # an existing install on the next start, without a new image.
 # ═══════════════════════════════════════════════════════════════════════════
 set -euo pipefail
@@ -34,6 +36,9 @@ ALL_TIERS_GROUP=all-tiers
 # What the MCP server may do as the signed-in user; see README, "Through the
 # MCP server".
 DEFAULT_MCP_GRANTS=basic,editpage,createeditmovepage,uploadfile,uploadeditmovefile
+# What the service account's bot password may do; see README, "Service
+# account".
+SERVICE_GRANTS=basic,highvolume,editpage,createeditmovepage,uploadfile,uploadeditmovefile,delete
 
 log() { printf 'papaia-mediawiki: %s\n' "$*" >&2; }
 die() { log "ERROR: $*"; exit 1; }
@@ -90,15 +95,32 @@ fi
 tls_ca=""
 if [[ -r "$LOCAL_CA_CRT" && -r "$LOCAL_CA_KEY" ]]; then
     tls_ca="$LOCAL_CA_CRT"
+elif [[ -r "$LOCAL_CA_CRT" ]]; then
+    log "WARNING: $LOCAL_CA_CRT is mounted but $LOCAL_CA_KEY is not readable: falling back to a self-signed certificate"
 fi
+tls_constrained() {
+    # A papaia local CA from papaia 1.9.0 or later carries name constraints
+    # and signs trusted certificates for host.docker.internal, localhost and
+    # IP addresses only. Signing still succeeds for any other name, but
+    # clients and openssl verify reject the result with a permitted subtree
+    # violation. The output is captured first: under pipefail, openssl's
+    # own failure would otherwise override a grep match.
+    [[ -n "$tls_ca" && -s "$TLS_DIR/tls.crt" ]] || return 1
+    local verdict
+    verdict="$(openssl verify -CAfile "$tls_ca" "$TLS_DIR/tls.crt" 2>&1 || true)"
+    grep -q 'permitted subtree violation' <<<"$verdict"
+}
 tls_current() {
     # The existing certificate fits: right host, valid for another 30 days,
     # and issued by the CA in use now (or self-signed when there is none).
+    # A certificate only the CA's name constraints reject also counts as
+    # current: a reissued one would be rejected the same way, so it is kept
+    # and the warning below fires instead.
     [[ -s "$TLS_DIR/tls.crt" && -s "$TLS_DIR/tls.key" ]] || return 1
     openssl x509 -in "$TLS_DIR/tls.crt" -noout -checkend 2592000 >/dev/null 2>&1 || return 1
     openssl x509 -in "$TLS_DIR/tls.crt" -noout "${tls_check[@]}" 2>/dev/null | grep -q 'does match' || return 1
     if [[ -n "$tls_ca" ]]; then
-        openssl verify -CAfile "$tls_ca" "$TLS_DIR/tls.crt" >/dev/null 2>&1
+        openssl verify -CAfile "$tls_ca" "$TLS_DIR/tls.crt" >/dev/null 2>&1 || tls_constrained
     else
         openssl verify -CAfile "$TLS_DIR/tls.crt" "$TLS_DIR/tls.crt" >/dev/null 2>&1
     fi
@@ -125,6 +147,9 @@ if ! tls_current; then
     install -m 0600 "$tls_tmp/tls.key" "$TLS_DIR/tls.key"
     install -m 0644 "$tls_tmp/tls.crt" "$TLS_DIR/tls.crt"
     rm -rf "$tls_tmp"
+fi
+if tls_constrained; then
+    log "WARNING: the papaia local CA signs for host.docker.internal, localhost and IP addresses only; clients will reject the certificate for $tls_host. Publish the wiki through the reverse proxy for this name (see README, 'Reverse proxy')"
 fi
 
 # ── 2. Database ───────────────────────────────────────────────────────────
@@ -191,6 +216,22 @@ fi
 # the web UI is unaffected.
 MW_ENABLE_LOCAL_LOGIN=true php maintenance/run.php createAndPromote --force --sysop --bureaucrat \
     --custom-groups="$ALL_TIERS_GROUP" "$MW_ADMIN_USER" "$MW_ADMIN_PASSWORD" >&2
+
+# ── 4b. Service account ───────────────────────────────────────────────────
+# Other add-ons sign in as <user>@<app> (MW_SERVICE_LOGIN) with the bot
+# password MW_SERVICE_PASSWORD. The account has no main password, so the bot
+# password, with its grants, is the only way in. The bot password is
+# rewritten only when the .env value or the grants changed; every other bot
+# password is removed, and an empty MW_SERVICE_PASSWORD removes this one too.
+# The script refuses the admin and any existing account with a password or a
+# Keycloak login, comparing names the way MediaWiki does.
+MW_SERVICE_LOGIN="${MW_SERVICE_LOGIN:-PapaiaService@service}"
+service_user="${MW_SERVICE_LOGIN%@*}"
+service_app="${MW_SERVICE_LOGIN##*@}"
+[[ -n "$service_user" && -n "$service_app" && "$MW_SERVICE_LOGIN" == *@* ]] \
+    || die "MW_SERVICE_LOGIN must be <user>@<app>"
+php "$RUNTIME_DIR/EnsureServiceAccount.php" --user="$service_user" --appid="$service_app" \
+    --admin="$MW_ADMIN_USER" --groups="bot,sysop,$ALL_TIERS_GROUP" --grants="$SERVICE_GRANTS" >&2
 
 # ── 5. OAuth ──────────────────────────────────────────────────────────────
 # The key pair signs the OAuth 2.0 access tokens. It is created once and

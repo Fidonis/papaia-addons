@@ -33,12 +33,13 @@ papaia-addons/
 │   ├── docker-compose.yml     # Compose fragment(s) for this add-on
 │   ├── .env.example           # Every declared env var with a placeholder value
 │   ├── README.md              # What it does, a services table, the minimum papaia version
+│   ├── CHANGELOG.md           # One section per add-on version, with upgrade notes
 │   └── integration/
 │       ├── infra/keycloak/*.json        # Client export(s) + audience mapper(s), imported on install
 │       ├── ai/librechat/librechat.yaml  # MCP server registration for LibreChat
 │       └── infra/nginx/*.conf           # Optional vhost fragment (public-facing add-ons only)
 ├── tools/
-│   ├── components.py          # Keeps component versions, .env.example and README tables equal to Compose
+│   ├── components.py          # Keeps component versions, .env.example and README tables equal to Compose; checks manifests and changelogs
 │   └── test_components.py     # Unit tests for it
 └── README.md
 ```
@@ -63,12 +64,35 @@ Every add-on manifest carries the same shape:
 | `local_ca_env` | Per-service list of env vars pointing at the bundled Keycloak CA cert (mounted from `$PAPAIA_CONFIG_DIR/certs`); `papaia-ctl` clears them via a generated override when `auth_provider=external_oidc`, so the add-on falls back to the system CA bundle instead of failing on a missing cert |
 | `env_prompts.<VAR>` | Per-variable metadata: `label` (prompt text), `hint` (secondary explanation), `default` / `default_from_core` (pulls a value from the core's own `.env`), `type` (`text`\|`integer`\|`url`\|`decimal`), `secret` (forces masking, or opts out of the name heuristic), `min`/`max` (numeric bounds), `pattern` (regex). All fields are optional; unset ones fall back to the raw env var name |
 | `env_replace_secrets.<VAR>` | Vars that cannot be generated automatically and must be copied in by hand after install — typically a Keycloak client secret, with a `hint` pointing at where to find it in the Keycloak Admin UI |
+| `install_notes[]` | Further steps `papaia-ctl addon install` prints as numbered entries of its checklist, for what an add-on needs by hand before it works. Plain strings; cores before 1.8.0 ignore the key |
 | `integration.keycloak.clients` | Paths to Keycloak client export JSON files imported on install |
+| `integration.keycloak.client_secrets.<path>` | For a client listed under `clients`: `secret_env` (the `.env` key with its secret, `GENERATE_SECRET` in `.env.example`) and optionally `root_url_env` (the key whose value becomes the client's root URL). A core serving `addon_api` 4 then creates the client on `start` and keeps its secret aligned with the `.env`; older cores ignore the key and list the client for a manual import |
 | `integration.keycloak.client_mappers` | Paths to mapper JSON applied to an *existing* client (e.g. the LibreChat client's audience mapper) rather than a new client of this add-on's own |
 | `integration.librechat` | Path to the MCP server registration consumed by LibreChat |
 | `integration.nginx` | Path to an optional Nginx vhost fragment, for add-ons that publish a browser-facing UI |
+| `install_notes` | Optional. Further numbered steps printed after the core's own install checklist, as a list or a single string. Display only, so no `addon_api` bump is needed; older cores ignore it |
+| `requires.addons[]` | Optional, `addon_api: 4` (papaia ≥ 1.9.0). Other add-ons this one builds on, each a name or `{name, version}` with a SemVer range checked against the other add-on's manifest `version`. `addon install`/`start`/`upgrade` and `addon check` refuse while one is not active or too old (`--force` degrades this to a warning), and `addon remove`/`uninstall` refuse to take away an add-on another active one requires |
+| `networks.join_addons[]` | Optional, `addon_api: 4`. `{addon, services}`: the listed services of this add-on also join the `networks.app_network` of an add-on from `requires.addons`; all other services stay off it. Written as a per-add-on override and applied by `addon start`. Single host only |
+| `exports[]` | Optional, `addon_api: 4`. Keys of this add-on's bundle `.env` that other add-ons may read through `default_from_addon`. No other key is ever read by another add-on, so export a dedicated service credential rather than an administrator password |
+| `env_prompts.<VAR>.default_from_addon` | Optional, `addon_api: 4`. `"<addon>:<KEY>"` fills the prompt at install from a key that an add-on in `requires.addons` lists under `exports`. The value is never echoed. Bundle values are sticky, so after the other add-on rotates the key, reinstall this one |
+| `actions.<name>` | Optional, `addon_api: 4`. Maintenance actions: `service` (a service of this add-on's compose file), optional fixed `args`, `description` and `destructive: true` (callers such as papaia-manager ask for confirmation first). `papaia-ctl addon run <addon> <name>` runs `docker compose run --rm <service> <args>` in the add-on's project and returns its exit code; extra arguments are refused. Give the service a compose profile (e.g. `profiles: [actions]`) so `addon start` skips it |
+| `integration/ai/librechat/agents/*.yaml`, `integration/ai/librechat/prompts/*.md` | Optional directories, `addon_api: 4`. LibreChat agents and slash-command prompts, in the formats of papaia's `agent.yaml.example` / `prompt.md.example`. Provisioned while the add-on is active and deleted when it is removed. An agent may only name MCP servers that the rendered `librechat.yaml` defines; agent ids are stored with the `agent_` prefix |
+| `knowledge.sources[]` | Optional, `addon_api: 6` (papaia ≥ 1.9.0). Knowledge sources this add-on contributes to the core's knowledge-map profile, collected only while that profile is active. Per source: a dotted `id` (`<addon>.<source>`), `system`, `mcp_server` (a server name from `integration.librechat`), `coverage`, `topics` (`{id, label, synonyms}`), `not_covered` (`{what, instead}`), 2–5 `example_queries`, 1–2 `counter_examples`, `key_tools`, `required_roles` (who may see the entry; empty means everyone) and `source_of_truth_for` (the topic ids this source wins when two sources share one). Further optional fields such as `on_denied`, `depends_on` and `governance_proposal` follow the core's schema (ADR 0014, 0016). Cores below generation 6 ignore the key, so a list such as `[2, 6]` keeps the add-on installable there. Operators refine entries in `overlay/knowledge-map/overrides.yaml` |
 
-Readers ignore unknown manifest keys, so new fields can be introduced without breaking older add-ons.
+Readers ignore unknown manifest keys, so new fields can be introduced without breaking older add-ons. An add-on that relies on one of the `addon_api: 4` fields declares `requires.addon_api: 4`, so an older core refuses it instead of silently ignoring the field. Add-ons that use none of them keep their current generation.
+
+`python tools/components.py check` also holds a manifest to the files next to it: `name` equals the directory name, every `env_prompts` and `env_replace_secrets` key is in `.env.example` (active or commented out), every path under `integration` exists, `networks.app_network` is the same string as a network `name:` in `docker-compose.yml`, and every `${VAR}` that Compose substitutes is in `.env.example`, except the variables the core `.env` hands to every add-on (`COMPOSE_PROJECT_NAME`, `GID`, `HOST_IP`, `PAPAIA_PROJECT`, `UID`).
+
+### The add-on changelog (`<addon>/CHANGELOG.md`)
+
+Each add-on keeps its own changelog next to its manifest. Tooling such as papaia-manager shows the section of a new version before an operator updates, so the headings are a contract:
+
+- [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style: one `## [X.Y.Z] - YYYY-MM-DD` heading per add-on version, newest first, each version once. An optional `## [Unreleased]` section may sit on top.
+- The newest dated section is the `version` in `papaia-app.yaml`.
+- A section may carry a `### Upgrade notes` subsection for steps the operator has to do by hand (new required variables, data migrations, files to move). Say what to do, not what the code does.
+- The section is written in the release-cut PR, together with the version bump, like the repository `CHANGELOG.md`. Feature and fix PRs do not touch it.
+
+`python tools/components.py check` fails for a missing file, a heading that does not parse, versions out of order or repeated, and a newest section that is not the manifest version. `release-check` fails when an add-on's version moved without a section for the new version.
 
 ---
 
@@ -122,6 +146,7 @@ shellcheck --severity=warning <script>
 - **Line endings**: LF everywhere, enforced via `.gitattributes`
 - **Trailing whitespace**: forbidden
 - **PHP** (`mediawiki/runtime/`): tabs, following the MediaWiki coding conventions the code extends
+- **Manifests and changelogs**: `python tools/components.py check` also validates each manifest against its add-on directory and each `CHANGELOG.md` (see the contracts above)
 - **Component versions**: `python tools/components.py check` must pass; after changing an image tag in a Compose file, run `python tools/components.py fix` instead of editing the manifest, `.env.example` and README by hand. The unit tests run with `python -m unittest discover -s tools`
 - Once a Python `src/` is introduced, `ruff check .` and the license-check workflow (see below) start applying
 
@@ -139,8 +164,8 @@ shellcheck --severity=warning <script>
   | Component major update, data migration, or any breaking change to env, manifest or integration | major |
   | Documentation only | none |
 
-  An add-on whose image tag embeds the add-on version (`mediawiki`) takes the new tag from the same bump.
-- At release-cut time, `python tools/components.py release-check --from <last tag>` fails for an add-on that changed without a version bump, or whose version moved without a change; `python tools/components.py report --from <last tag>` prints the add-on and component matrix for `CHANGELOG.md` and the release notes.
+  An add-on whose image tag embeds the add-on version (`mediawiki`) takes the new tag from the same bump. The bump comes with the add-on's `CHANGELOG.md` section for the new version.
+- At release-cut time, `python tools/components.py release-check --from <last tag>` fails for an add-on that changed without a version bump, whose version moved without a change, or whose version moved without a `CHANGELOG.md` section for it; `python tools/components.py report --from <last tag>` prints the add-on and component matrix for `CHANGELOG.md` and the release notes.
 - Pin policy: primary and Fidonis components use an exact tag (`3.0.5`, not `3` or `latest`). A sidecar may use a floating tag (`postgres:18`) only when its component entry says `pinned: false`, so the table shows that the deployed version depends on the pull date.
 - `CHANGELOG.md` follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); it is updated by hand in a dedicated `docs:` PR at release-cut time, not by every feature/fix PR.
 - [release-drafter](https://github.com/release-drafter/release-drafter) auto-drafts GitHub Release notes from merged PR titles on every push to `main`; publishing that draft is what creates the release tag.
@@ -151,5 +176,5 @@ shellcheck --severity=warning <script>
 
 - **Never commit `.env` files.** Every add-on ships only `.env.example`, with placeholder values (`.gitignore` enforces this).
 - **Never commit generated secrets** — Keycloak realm exports, client secrets, or any other credential produced by an actual install.
-- Variables marked `secret: true` in a manifest are either auto-generated on install or, for `env_replace_secrets` entries, filled in by hand from the Keycloak Admin UI after the client import — never hard-coded.
+- Variables marked `secret: true` in a manifest are either auto-generated on install (including client secrets named under `client_secrets`) or, for `env_replace_secrets` entries, filled in by hand from the Keycloak Admin UI after the client import — never hard-coded.
 - **No copyleft dependencies** (GPL/LGPL/AGPL/EUPL/SSPL and similar) — enforced by the license-check workflow once a Python `src/` project exists.
